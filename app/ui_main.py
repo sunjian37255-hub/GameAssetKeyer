@@ -1,0 +1,928 @@
+from __future__ import annotations
+
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at https://mozilla.org/MPL/2.0/.
+# SPDX-License-Identifier: MPL-2.0
+
+import os
+import queue
+import tkinter as tk
+from copy import deepcopy
+from pathlib import Path
+from tkinter import filedialog, messagebox, simpledialog, ttk
+
+from PIL import Image
+
+from .align_utils import align_frames
+from .branding import APP_NAME
+from .color_key_processor import DEFAULT_PARAMS, intensity_params
+from .equal_grid_utils import normalize_equal_grid
+from .frame_sequence_exporter import export_png_frame_sequence
+from .final_result import (
+    resolve_final_result_source,
+    resolve_pipeline_result_source,
+    resolve_pre_alignment_source,
+)
+from .i18n import I18n
+from .pipeline import (
+    add_stage,
+    delete_stage,
+    duplicate_stage,
+    effective_stage_params,
+    ensure_pipeline,
+    move_stage,
+    process_pipeline_image,
+    clear_frame_params,
+    set_frame_params,
+    set_stage_enabled,
+    update_stage,
+)
+from .preset_manager import ensure_default_presets, load_preset, save_preset
+from .project_manager import ProjectManager
+from .sheet_exporter import export_sheet
+from .trim_utils import trim_frames
+from .ui.create_project_dialog import CreateProjectDialog
+from .ui.equal_grid_dialog import EqualGridDialog
+from .ui.project_name_dialog import ProjectNameDialog
+from .ui.widgets import ImageCanvas, ScrollableFrame
+from .workers import PipelineFrameWorker, PipelineWorker
+
+MODE_KEYS = ("green", "black", "white", "magenta", "custom")
+LANGUAGE_NAMES = {"zh_CN": "简体中文", "en_US": "English"}
+
+
+class GameAssetKeyerApp:
+    def __init__(self, app_root: Path):
+        self.app_root = app_root
+        self.i18n = I18n(app_root)
+        self.pm = ProjectManager(app_root)
+        self.presets_dir = app_root / "presets"
+        ensure_default_presets(self.presets_dir)
+        self.root = tk.Tk()
+        self.root.title(APP_NAME)
+        self.root.geometry("1360x820")
+        self.root.minsize(960, 640)
+        self.current_project_id: str | None = None
+        self.current_project: dict = {}
+        self.current_frame_index = 1
+        self.selected_stage_index = 0
+        self.worker: PipelineWorker | None = None
+        self.worker_events: queue.Queue[dict] = queue.Queue()
+        self.preview_images: dict[str, Image.Image] = {}
+        self.current_view = "result"
+        self._stage_loaded = False
+        self._eyedropper_active = False
+        self._configure_style()
+        self._create_variables()
+        self._build_shell()
+        self.root.bind("<Escape>", self.cancel_eyedropper, add="+")
+        self.show_home()
+
+    def run(self) -> None:
+        self.root.mainloop()
+
+    def _configure_style(self) -> None:
+        style = ttk.Style(self.root)
+        if "clam" in style.theme_names():
+            style.theme_use("clam")
+        self.root.configure(background="#171a1f")
+        style.configure(".", background="#252a31", foreground="#e7e9ed", fieldbackground="#1d2127", font=("Segoe UI", 10))
+        style.configure("TFrame", background="#252a31")
+        style.configure("Panel.TFrame", background="#20242b")
+        style.configure("Card.TFrame", background="#2d333c", relief="flat")
+        style.configure("TLabel", background="#252a31", foreground="#e7e9ed")
+        style.configure("Muted.TLabel", foreground="#aeb5bf")
+        style.configure("Title.TLabel", font=("Segoe UI Semibold", 18))
+        style.configure("Section.TLabel", font=("Segoe UI Semibold", 11))
+        style.configure("TButton", padding=(10, 7))
+        style.configure("Primary.TButton", background="#3b82f6", foreground="white")
+        style.map("Primary.TButton", background=[("active", "#5595f7"), ("disabled", "#475569")])
+        style.configure("Stage.TButton", anchor="w", padding=(10, 8))
+        style.configure("Selected.Stage.TButton", background="#3b82f6", foreground="white", anchor="w", padding=(10, 8))
+        style.configure("Treeview", background="#1d2127", fieldbackground="#1d2127", foreground="#e7e9ed", rowheight=28)
+        style.configure("TNotebook", background="#171a1f")
+        style.configure("TProgressbar", background="#3b82f6")
+
+    def _create_variables(self) -> None:
+        self.status_var = tk.StringVar(value=self.t("status.ready"))
+        self.progress_text_var = tk.StringVar(value="")
+        self.progress_var = tk.DoubleVar(value=0)
+        self.frame_override_var = tk.StringVar(value="")
+        self.mode_var = tk.StringVar(value=self.t("mode.black"))
+        self.custom_color_var = tk.StringVar(value="#000000")
+        self.intensity_var = tk.IntVar(value=3)
+        self.intensity_label_var = tk.StringVar(value=self.t("intensity.black.3"))
+        self.bg_threshold_var = tk.DoubleVar(value=0.40)
+        self.fg_threshold_var = tk.DoubleVar(value=0.76)
+        self.feather_var = tk.DoubleVar(value=1.5)
+        self.edge_erode_var = tk.IntVar(value=0)
+        self.min_hole_var = tk.IntVar(value=4)
+        self.alpha_gamma_var = tk.DoubleVar(value=1.0)
+        self.saturation_var = tk.DoubleVar(value=0.35)
+        self.output_alpha_var = tk.DoubleVar(value=1.0)
+        self.keep_sparks_var = tk.BooleanVar(value=True)
+        self.enable_hole_var = tk.BooleanVar(value=True)
+        self.left_view_var = tk.StringVar(value="input")
+        self.right_view_var = tk.StringVar(value="result")
+        self._create_dialog: CreateProjectDialog | None = None
+
+    def _build_shell(self) -> None:
+        self.header = ttk.Frame(self.root, padding=(16, 10), style="Panel.TFrame")
+        self.header.pack(fill="x")
+        ttk.Label(self.header, text=APP_NAME, style="Title.TLabel").pack(side="left")
+        ttk.Button(self.header, text=self.t("nav.home"), command=self.show_home).pack(side="right", padx=(8, 0))
+        ttk.Label(self.header, text=self.t("language.label")).pack(side="right", padx=(8, 4))
+        self.language_combo = ttk.Combobox(self.header, values=list(LANGUAGE_NAMES.values()), state="readonly", width=12)
+        self.language_combo.set(LANGUAGE_NAMES[self.i18n.locale])
+        self.language_combo.pack(side="right")
+        self.language_combo.bind("<<ComboboxSelected>>", self.on_language_change)
+        self.page = ttk.Frame(self.root, style="Panel.TFrame")
+        self.page.pack(fill="both", expand=True)
+        self.footer = ttk.Frame(self.root, padding=(12, 6), style="Panel.TFrame")
+        self.footer.pack(fill="x")
+        ttk.Label(self.footer, textvariable=self.status_var, style="Muted.TLabel").pack(side="left")
+        ttk.Label(self.footer, textvariable=self.progress_text_var).pack(side="right")
+
+    def t(self, key: str, **values: object) -> str:
+        return self.i18n.tr(key, **values)
+
+    def mode_labels(self) -> dict[str, str]:
+        return {key: self.t(f"mode.{key}") for key in MODE_KEYS}
+
+    def mode_key(self) -> str:
+        current = self.mode_var.get()
+        return next((key for key, label in self.mode_labels().items() if label == current), "black")
+
+    def on_language_change(self, _event=None) -> None:
+        selected = next((code for code, name in LANGUAGE_NAMES.items() if name == self.language_combo.get()), "en_US")
+        if selected == self.i18n.locale:
+            return
+        if self.current_project:
+            self.save_selected_stage(silent=True)
+        self.i18n.set_locale(selected)
+        for widget in (self.header, self.page, self.footer):
+            widget.destroy()
+        self._build_shell()
+        if self.current_project_id:
+            stage_index = self.selected_stage_index
+            frame_index = self.current_frame_index
+            self._stage_loaded = False
+            self.build_workbench()
+            self.refresh_frame_list()
+            self.current_frame_index = min(frame_index, max(1, self.frame_listbox.size()))
+            if self.frame_listbox.size():
+                self.frame_listbox.selection_clear(0, "end")
+                self.frame_listbox.selection_set(self.current_frame_index - 1)
+            self.refresh_stage_list()
+            self.select_stage(min(stage_index, len(ensure_pipeline(self.current_project)["stages"]) - 1))
+        else:
+            self.show_home()
+        self.status_var.set(self.t("status.ready"))
+
+    def _clear_page(self) -> None:
+        self.cancel_eyedropper(update_status=False)
+        for child in self.page.winfo_children():
+            child.destroy()
+
+    def show_home(self) -> None:
+        self._clear_page()
+        home = ttk.Frame(self.page, padding=28, style="Panel.TFrame")
+        home.pack(fill="both", expand=True)
+        ttk.Label(home, text=self.t("home.title"), style="Title.TLabel").pack(anchor="w")
+        ttk.Label(home, text=self.t("home.subtitle"), style="Muted.TLabel").pack(anchor="w", pady=(4, 22))
+        launch = ttk.Frame(home, style="Panel.TFrame")
+        launch.pack(fill="x")
+        for title, subtitle, command in [
+            (self.t("home.image"), self.t("home.image_subtitle"), self.create_image_project),
+            (self.t("home.sheet"), self.t("home.sheet_subtitle"), self.create_sheet_project),
+            (self.t("home.video"), self.t("home.video_subtitle"), self.create_video_project),
+        ]:
+            card = ttk.Frame(launch, padding=18, style="Card.TFrame")
+            card.pack(side="left", fill="both", expand=True, padx=(0, 12))
+            ttk.Label(card, text=title, style="Section.TLabel").pack(anchor="w")
+            ttk.Label(card, text=subtitle, style="Muted.TLabel").pack(anchor="w", pady=(4, 16))
+            ttk.Button(card, text=self.t("home.start"), style="Primary.TButton", command=command).pack(anchor="w")
+        standalone = ttk.LabelFrame(home, text=self.t("home.standalone_tools"), padding=12)
+        standalone.pack(fill="x", pady=(18, 0))
+        equal_grid = ttk.Frame(standalone, padding=12, style="Card.TFrame")
+        equal_grid.pack(fill="x")
+        equal_grid.columnconfigure(0, weight=1)
+        ttk.Label(equal_grid, text=self.t("tools.equal_grid"), style="Section.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(equal_grid, text=self.t("home.equal_grid_subtitle"), style="Muted.TLabel").grid(row=1, column=0, sticky="w", pady=(4, 0))
+        ttk.Button(equal_grid, text=self.t("home.start"), command=self.run_equal_grid).grid(row=0, column=1, rowspan=2, sticky="e", padx=(18, 0))
+        recent = ttk.LabelFrame(home, text=self.t("recent.title"), padding=12)
+        recent.pack(fill="both", expand=True, pady=(18, 0))
+        self.recent_tree = ttk.Treeview(recent, columns=("type", "frames"), show="tree headings")
+        self.recent_tree.heading("#0", text=self.t("recent.project"))
+        self.recent_tree.heading("type", text=self.t("recent.type"))
+        self.recent_tree.heading("frames", text=self.t("recent.frames"))
+        self.recent_tree.column("#0", width=360)
+        self.recent_tree.column("type", width=120)
+        self.recent_tree.column("frames", width=80)
+        self.recent_tree.pack(fill="both", expand=True)
+        self.recent_tree.bind("<Double-1>", lambda _event: self.open_recent_project())
+        self.recent_tree.bind("<Button-3>", self.show_recent_project_menu)
+        self.recent_project_menu = tk.Menu(
+            self.recent_tree,
+            tearoff=False,
+            background="#252a31",
+            foreground="#e7e9ed",
+            activebackground="#3b82f6",
+            activeforeground="white",
+        )
+        self.recent_project_menu.add_command(label=self.t("project.menu.open"), command=self.open_recent_project)
+        self.recent_project_menu.add_command(label=self.t("project.menu.rename"), command=self.rename_recent_project)
+        self.recent_project_menu.add_command(label=self.t("project.menu.delete"), command=self.delete_recent_project)
+        for project in self.pm.list_projects():
+            project_type = self.t(f"type.{project['project_type']}")
+            self.recent_tree.insert("", "end", iid=project["id"], text=project["name"], values=(project_type, project.get("frame_count", project.get("rows", 0) * project.get("cols", 0))))
+
+    def create_image_project(self) -> None:
+        self._show_create_dialog("image")
+
+    def create_sheet_project(self) -> None:
+        self._show_create_dialog("sheet")
+
+    def create_video_project(self) -> None:
+        self._show_create_dialog("video")
+
+    def _show_create_dialog(self, kind: str) -> None:
+        if self._create_dialog is not None and self._create_dialog.window.winfo_exists():
+            self._create_dialog.window.lift()
+            self._create_dialog.window.focus_force()
+            return
+        dialog = CreateProjectDialog(self.root, kind, self.t, self.mode_labels())
+        self._create_dialog = dialog
+        try:
+            request = dialog.show()
+        finally:
+            self._create_dialog = None
+        if request is not None:
+            self._create_project_from_request(request)
+
+    def _create_project_from_request(self, request: dict[str, object]) -> None:
+        try:
+            source = Path(request["source"])
+            name = str(request["name"])
+            target_mode = str(request["target_mode"])
+            custom_color = str(request["custom_color"])
+            if request["kind"] == "video":
+                project = self.pm.create_video_project(source, name, int(request["frame_interval"]), target_mode, custom_color)
+            else:
+                rows = int(request.get("rows", 1))
+                cols = int(request.get("cols", 1))
+                project = self.pm.create_project(source, name, rows, cols, target_mode, custom_color)
+            self.load_project(project["id"])
+        except Exception as exc:
+            messagebox.showerror(self.t("error.create_title"), str(exc), parent=self.root)
+
+    def open_recent_project(self) -> None:
+        selected = self.recent_tree.selection()
+        if selected:
+            self.load_project(selected[0])
+
+    def show_recent_project_menu(self, event) -> None:
+        project_id = self.recent_tree.identify_row(event.y)
+        if not project_id:
+            return
+        self.recent_tree.selection_set(project_id)
+        self.recent_tree.focus(project_id)
+        try:
+            self.recent_project_menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            self.recent_project_menu.grab_release()
+
+    def rename_recent_project(self) -> None:
+        selected = self.recent_tree.selection()
+        if not selected:
+            return
+        project_id = selected[0]
+        project = self.pm.load_project(project_id)
+        new_name = ProjectNameDialog(self.root, project.get("name", project_id), self.t).show()
+        if new_name is None:
+            return
+        updated = self.pm.rename_project(project_id, new_name)
+        if self.current_project_id == project_id:
+            self.current_project = updated
+        self.show_home()
+        self.status_var.set(self.t("status.project_renamed", name=new_name))
+
+    def delete_recent_project(self) -> None:
+        selected = self.recent_tree.selection()
+        if not selected:
+            return
+        project_id = selected[0]
+        project = self.pm.load_project(project_id)
+        if not messagebox.askyesno(
+            self.t("project.delete.title"),
+            self.t("project.delete.confirm", name=project.get("name", project_id)),
+            parent=self.root,
+        ):
+            return
+        self.pm.delete_project(project_id)
+        if self.current_project_id == project_id:
+            self.current_project_id = None
+            self.current_project = {}
+        self.show_home()
+        self.status_var.set(self.t("status.project_deleted", name=project.get("name", project_id)))
+
+    def load_project(self, project_id: str) -> None:
+        self.current_project_id = project_id
+        self.current_project = self.pm.load_project(project_id)
+        ensure_pipeline(self.current_project)
+        self.current_frame_index = 1
+        self.selected_stage_index = 0
+        self._stage_loaded = False
+        self.build_workbench()
+        self.refresh_frame_list()
+        self.refresh_stage_list()
+        self.select_stage(0)
+        self.refresh_preview_images()
+        self.status_var.set(self.t("status.opened", name=self.current_project.get("name", project_id)))
+
+    def build_workbench(self) -> None:
+        self._clear_page()
+        outer = ttk.Frame(self.page, style="Panel.TFrame")
+        outer.pack(fill="both", expand=True)
+        outer.columnconfigure(0, weight=1)
+        outer.rowconfigure(0, weight=1)
+        workspace = ttk.Frame(outer, style="Panel.TFrame")
+        workspace.grid(row=0, column=0, sticky="nsew")
+        workspace.columnconfigure(0, minsize=210)
+        workspace.columnconfigure(1, weight=1, minsize=320)
+        workspace.columnconfigure(2, minsize=350)
+        workspace.rowconfigure(0, weight=1)
+        left = ttk.Frame(workspace, padding=10, style="Panel.TFrame", width=210)
+        center = ttk.Frame(workspace, padding=10, style="Panel.TFrame")
+        right = ttk.Frame(workspace, padding=10, style="Panel.TFrame", width=350)
+        left.grid(row=0, column=0, sticky="nsew")
+        center.grid(row=0, column=1, sticky="nsew")
+        right.grid(row=0, column=2, sticky="nsew")
+        left.grid_propagate(False)
+        right.grid_propagate(False)
+        self._build_left_panel(left)
+        self._build_preview_panel(center)
+        self._build_pipeline_panel(right)
+        self._build_tool_bar(outer).grid(row=1, column=0, sticky="ew")
+
+    def _build_left_panel(self, parent: ttk.Frame) -> None:
+        ttk.Label(parent, text=self.current_project.get("name", self.t("project.fallback")), style="Section.TLabel").pack(anchor="w")
+        ttk.Label(parent, text=self.t("project.frames"), style="Muted.TLabel").pack(anchor="w", pady=(2, 8))
+        frame_box = ttk.Frame(parent)
+        frame_box.pack(fill="both", expand=True)
+        self.frame_listbox = tk.Listbox(frame_box, background="#1d2127", foreground="#e7e9ed", selectbackground="#3b82f6", borderwidth=0, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(frame_box, orient="vertical", command=self.frame_listbox.yview)
+        self.frame_listbox.configure(yscrollcommand=scrollbar.set)
+        self.frame_listbox.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        self.frame_listbox.bind("<<ListboxSelect>>", self.on_frame_select)
+        ttk.Button(parent, text=self.t("project.open_folder"), command=self.open_project_folder).pack(fill="x", pady=(8, 0))
+
+    def _build_preview_panel(self, parent: ttk.Frame) -> None:
+        parent.columnconfigure(0, weight=1, uniform="preview")
+        parent.columnconfigure(1, weight=1, uniform="preview")
+        parent.rowconfigure(0, weight=1)
+        self.view_buttons: dict[str, ttk.Radiobutton] = {}
+        left_panel = self._build_preview_side(parent, 0, ("original", "input"), self.left_view_var)
+        right_panel = self._build_preview_side(parent, 1, ("result", "final"), self.right_view_var)
+        self.left_preview_canvas = ImageCanvas(left_panel)
+        self.left_preview_canvas.grid(row=1, column=0, sticky="nsew")
+        self.right_preview_canvas = ImageCanvas(right_panel)
+        self.right_preview_canvas.grid(row=1, column=0, sticky="nsew")
+        # Preserve the public attribute used by the eyedropper and existing integrations.
+        self.preview_canvas = self.left_preview_canvas
+
+    def _build_preview_side(self, parent: ttk.Frame, column: int, keys: tuple[str, str], variable: tk.StringVar) -> ttk.Frame:
+        panel = ttk.Frame(parent, style="Panel.TFrame")
+        panel.grid(row=0, column=column, sticky="nsew", padx=(0, 4) if column == 0 else (4, 0))
+        panel.columnconfigure(0, weight=1)
+        panel.rowconfigure(1, weight=1)
+        toolbar = ttk.Frame(panel)
+        toolbar.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        for button_column, key in enumerate(keys):
+            toolbar.columnconfigure(button_column, weight=1, uniform="preview_button")
+            button = ttk.Radiobutton(
+                toolbar,
+                text=self.t(f"view.{key}"),
+                variable=variable,
+                value=key,
+                command=lambda selected=key: self.show_preview_view(selected),
+                style="Toolbutton",
+            )
+            button.grid(row=0, column=button_column, sticky="ew", padx=(0, 4) if button_column == 0 else 0)
+            self.view_buttons[key] = button
+        return panel
+
+    def _build_pipeline_panel(self, parent: ttk.Frame) -> None:
+        ttk.Label(parent, text=self.t("pipeline.title"), style="Section.TLabel").pack(anchor="w")
+        ttk.Label(parent, text=self.t("pipeline.subtitle"), style="Muted.TLabel").pack(anchor="w", pady=(0, 8))
+        self.pipeline_scroll = ScrollableFrame(parent, height=210)
+        self.pipeline_scroll.pack(fill="both", expand=True)
+        self.stage_list_frame = ttk.Frame(self.pipeline_scroll.content)
+        self.stage_list_frame.pack(fill="x")
+        stage_actions = ttk.Frame(self.pipeline_scroll.content)
+        stage_actions.pack(fill="x", pady=6)
+        for text, command in [("+", self.add_stage_ui), (self.t("action.duplicate"), self.duplicate_stage_ui), (self.t("action.delete"), self.delete_stage_ui), ("↑", lambda: self.move_stage_ui(-1)), ("↓", lambda: self.move_stage_ui(1))]:
+            ttk.Button(stage_actions, text=text, command=command).pack(side="left", padx=(0, 3))
+        self._build_stage_editor(self.pipeline_scroll.content)
+
+    def _build_stage_editor(self, parent: ttk.Frame) -> None:
+        editor = ttk.LabelFrame(parent, text=self.t("editor.title"), padding=10)
+        editor.pack(fill="x", pady=(6, 0))
+        ttk.Label(editor, text=self.t("editor.target_color")).grid(row=0, column=0, sticky="w")
+        mode = ttk.Combobox(editor, textvariable=self.mode_var, values=list(self.mode_labels().values()), state="readonly")
+        mode.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(2, 6))
+        mode.bind("<<ComboboxSelected>>", lambda _event: self.update_intensity_label())
+        ttk.Entry(editor, textvariable=self.custom_color_var).grid(row=2, column=0, sticky="ew")
+        ttk.Button(editor, text=self.t("editor.eyedropper"), command=self.start_eyedropper).grid(row=2, column=1, padx=(4, 0))
+        ttk.Label(editor, text=self.t("editor.intensity")).grid(row=3, column=0, sticky="w", pady=(8, 0))
+        scale = ttk.Scale(editor, from_=1, to=5, variable=self.intensity_var, command=self.on_intensity_change)
+        scale.grid(row=4, column=0, columnspan=2, sticky="ew")
+        ttk.Label(editor, textvariable=self.intensity_label_var, style="Muted.TLabel").grid(row=5, column=0, columnspan=2, sticky="w")
+        self._spin(editor, self.t("param.background_threshold"), self.bg_threshold_var, 0.0, 1.0, 0.01, 6)
+        self._spin(editor, self.t("param.foreground_threshold"), self.fg_threshold_var, 0.0, 1.0, 0.01, 7)
+        self._spin(editor, self.t("param.feather"), self.feather_var, 0.0, 10.0, 0.1, 8)
+        self._spin(editor, self.t("param.edge_erode"), self.edge_erode_var, 0, 8, 1, 9)
+        self.advanced_visible = False
+        self.advanced_button = ttk.Button(editor, text=self.t("param.advanced_closed"), command=self.toggle_advanced)
+        self.advanced_button.grid(row=10, column=0, columnspan=2, sticky="ew", pady=(8, 3))
+        self.advanced_frame = ttk.Frame(editor)
+        self._spin(self.advanced_frame, self.t("param.min_hole"), self.min_hole_var, 0, 9999, 1, 0)
+        self._spin(self.advanced_frame, self.t("param.alpha_gamma"), self.alpha_gamma_var, 0.1, 4.0, 0.1, 1)
+        self._spin(self.advanced_frame, self.t("param.saturation_protect"), self.saturation_var, 0.0, 1.0, 0.01, 2)
+        self._spin(self.advanced_frame, self.t("param.output_alpha"), self.output_alpha_var, 0.0, 1.0, 0.01, 3)
+        ttk.Checkbutton(self.advanced_frame, text=self.t("param.keep_sparks"), variable=self.keep_sparks_var).grid(row=4, column=0, columnspan=2, sticky="w")
+        ttk.Checkbutton(self.advanced_frame, text=self.t("param.hole_punch"), variable=self.enable_hole_var).grid(row=5, column=0, columnspan=2, sticky="w")
+        editor.columnconfigure(0, weight=1)
+        self.cancel_button = ttk.Button(editor, text=self.t("action.cancel"), command=self.cancel_worker, state="disabled")
+        ttk.Label(editor, textvariable=self.frame_override_var, style="Muted.TLabel").grid(row=12, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        ttk.Button(editor, text=self.t("action.preview_stage"), command=self.preview_selected_stage).grid(row=13, column=0, columnspan=2, sticky="ew", pady=(6, 3))
+        ttk.Button(editor, text=self.t("action.process_frame"), command=self.process_current_frame_ui).grid(row=14, column=0, columnspan=2, sticky="ew", pady=3)
+        ttk.Button(editor, text=self.t("action.clear_frame_override"), command=self.clear_current_frame_override_ui).grid(row=15, column=0, columnspan=2, sticky="ew", pady=3)
+        ttk.Button(editor, text=self.t("action.process_all"), style="Primary.TButton", command=self.start_process_all).grid(row=16, column=0, columnspan=2, sticky="ew", pady=3)
+        self.cancel_button.grid(row=17, column=0, columnspan=2, sticky="ew", pady=3)
+        self.progress_bar = ttk.Progressbar(editor, variable=self.progress_var, maximum=100)
+        self.progress_bar.grid(row=18, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+        preset_row = ttk.Frame(editor)
+        preset_row.grid(row=19, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        ttk.Button(preset_row, text=self.t("preset.load"), command=self.load_preset_ui).pack(side="left", fill="x", expand=True)
+        ttk.Button(preset_row, text=self.t("preset.save"), command=self.save_preset_ui).pack(side="left", fill="x", expand=True, padx=(4, 0))
+
+    def _spin(self, parent, label: str, variable, low, high, increment, row: int) -> None:
+        ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", pady=(5, 0))
+        ttk.Spinbox(parent, from_=low, to=high, increment=increment, textvariable=variable, width=10).grid(row=row, column=1, sticky="e", pady=(5, 0))
+
+    def toggle_advanced(self) -> None:
+        self.advanced_visible = not self.advanced_visible
+        if self.advanced_visible:
+            self.advanced_frame.grid(row=11, column=0, columnspan=2, sticky="ew")
+            self.advanced_button.configure(text=self.t("param.advanced_open"))
+        else:
+            self.advanced_frame.grid_remove()
+            self.advanced_button.configure(text=self.t("param.advanced_closed"))
+
+    def _build_tool_bar(self, parent: ttk.Frame) -> ttk.Frame:
+        tools = ttk.Frame(parent, padding=(10, 8), style="Panel.TFrame")
+        ttk.Label(tools, text=self.t("tools.title")).pack(side="left", padx=(0, 8))
+        export_key = "tools.export_video" if self.current_project.get("project_type") == "video" else "tools.export"
+        for text, command in [(self.t("tools.trim"), self.run_trim), (self.t("tools.align"), self.run_align), (self.t(export_key), self.run_export)]:
+            ttk.Button(tools, text=text, command=command).pack(side="left", padx=(0, 4))
+        return tools
+
+    def project_path(self) -> Path:
+        if not self.current_project_id:
+            raise ValueError(self.t("error.no_project"))
+        return self.pm.project_path(self.current_project_id)
+
+    def refresh_frame_list(self) -> None:
+        self.frame_listbox.delete(0, "end")
+        for frame in sorted((self.project_path() / "01_frames_raw").glob("frame_*.png")):
+            self.frame_listbox.insert("end", frame.name)
+        if self.frame_listbox.size():
+            self.frame_listbox.selection_set(0)
+
+    def on_frame_select(self, _event=None) -> None:
+        selected = self.frame_listbox.curselection()
+        if selected:
+            self.cancel_eyedropper(update_status=False)
+            self._save_visible_params_for_navigation()
+            self.current_frame_index = selected[0] + 1
+            stage = ensure_pipeline(self.current_project)["stages"][self.selected_stage_index]
+            self.apply_params(effective_stage_params(stage, self.current_raw_frame().name))
+            self.update_frame_override_label()
+            self.refresh_preview_images()
+
+    def _save_visible_params_for_navigation(self) -> None:
+        """Keep unsaved stage defaults or a frame override when changing frames."""
+        if not self._stage_loaded or not self.current_project_id:
+            return
+        stages = ensure_pipeline(self.current_project)["stages"]
+        if not 0 <= self.selected_stage_index < len(stages):
+            return
+        frame_name = self.current_raw_frame().name
+        params = self.collect_params()
+        if frame_name in stages[self.selected_stage_index]["frame_params"]:
+            set_frame_params(self.current_project, self.selected_stage_index, frame_name, params)
+        else:
+            update_stage(self.current_project, self.selected_stage_index, params)
+        self.pm.save_project(self.current_project_id, self.current_project)
+
+    def current_raw_frame(self) -> Path:
+        return self.project_path() / "01_frames_raw" / f"frame_{self.current_frame_index:06d}.png"
+
+    def refresh_stage_list(self) -> None:
+        for child in self.stage_list_frame.winfo_children():
+            child.destroy()
+        stages = ensure_pipeline(self.current_project)["stages"]
+        self.selected_stage_index = min(self.selected_stage_index, len(stages) - 1)
+        for index, stage in enumerate(stages):
+            row = ttk.Frame(self.stage_list_frame, style="Card.TFrame", padding=4)
+            row.pack(fill="x", pady=2)
+            enabled = tk.BooleanVar(value=stage["enabled"])
+            ttk.Checkbutton(row, variable=enabled, command=lambda i=index, var=enabled: self.toggle_stage_ui(i, var.get())).pack(side="left")
+            mode_key = stage["params"]["target_mode"]
+            mode = self.mode_labels().get(mode_key, self.t("mode.custom"))
+            custom = stage["params"]["custom_color"] if mode_key == "custom" else ""
+            status = self.t(f"stage.{stage['status']}")
+            text = f"{self.t('stage.label', number=index + 1)} · {mode} {custom} · {status}"
+            style = "Selected.Stage.TButton" if index == self.selected_stage_index else "Stage.TButton"
+            ttk.Button(row, text=text, style=style, command=lambda i=index: self.select_stage(i)).pack(side="left", fill="x", expand=True)
+
+    def select_stage(self, index: int) -> None:
+        self.cancel_eyedropper(update_status=False)
+        self.selected_stage_index = index
+        stage = ensure_pipeline(self.current_project)["stages"][index]
+        frame_name = self.current_raw_frame().name if self.current_project_id else None
+        self.apply_params(effective_stage_params(stage, frame_name))
+        self._stage_loaded = True
+        self.update_frame_override_label()
+        if hasattr(self, "stage_list_frame"):
+            self.refresh_stage_list()
+        self.refresh_preview_images()
+
+    def collect_params(self) -> dict:
+        return {
+            "target_mode": self.mode_key(),
+            "custom_color": self.custom_color_var.get(),
+            "intensity": int(float(self.intensity_var.get())),
+            "background_threshold": float(self.bg_threshold_var.get()),
+            "foreground_threshold": float(self.fg_threshold_var.get()),
+            "feather_radius": float(self.feather_var.get()),
+            "edge_erode": int(float(self.edge_erode_var.get())),
+            "min_hole_size": int(float(self.min_hole_var.get())),
+            "alpha_gamma": float(self.alpha_gamma_var.get()),
+            "saturation_protect": float(self.saturation_var.get()),
+            "output_alpha": float(self.output_alpha_var.get()),
+            "keep_sparks": bool(self.keep_sparks_var.get()),
+            "enable_hole_punch": bool(self.enable_hole_var.get()),
+        }
+
+    def apply_params(self, params: dict) -> None:
+        config = DEFAULT_PARAMS.copy()
+        config.update(params)
+        self.mode_var.set(self.mode_labels().get(config["target_mode"], self.t("mode.black")))
+        self.custom_color_var.set(config["custom_color"])
+        self.intensity_var.set(int(config["intensity"]))
+        self.bg_threshold_var.set(float(config["background_threshold"]))
+        self.fg_threshold_var.set(float(config["foreground_threshold"]))
+        self.feather_var.set(float(config["feather_radius"]))
+        self.edge_erode_var.set(int(config["edge_erode"]))
+        self.min_hole_var.set(int(config["min_hole_size"]))
+        self.alpha_gamma_var.set(float(config["alpha_gamma"]))
+        self.saturation_var.set(float(config["saturation_protect"]))
+        self.output_alpha_var.set(float(config["output_alpha"]))
+        self.keep_sparks_var.set(bool(config["keep_sparks"]))
+        self.enable_hole_var.set(bool(config["enable_hole_punch"]))
+        self.update_intensity_label()
+
+    def save_selected_stage(self, *, silent: bool = False) -> None:
+        if not self.current_project:
+            return
+        stages = ensure_pipeline(self.current_project)["stages"]
+        if not 0 <= self.selected_stage_index < len(stages):
+            return
+        try:
+            update_stage(self.current_project, self.selected_stage_index, self.collect_params())
+            self.pm.save_project(self.current_project_id, self.current_project)
+        except (tk.TclError, ValueError) as exc:
+            if not silent:
+                messagebox.showerror(self.t("error.params_title"), str(exc), parent=self.root)
+
+    def update_intensity_label(self) -> None:
+        mode = self.mode_key()
+        index = max(1, min(5, int(float(self.intensity_var.get())))) - 1
+        self.intensity_label_var.set(self.t(f"intensity.{mode}.{index + 1}"))
+
+    def on_intensity_change(self, _value: str | None = None) -> None:
+        self.update_intensity_label()
+        if self.mode_key() == "black":
+            values = intensity_params("black", int(float(self.intensity_var.get())))
+            self.bg_threshold_var.set(round(values["low"], 3))
+            self.fg_threshold_var.set(round(values["high"], 3))
+
+    def add_stage_ui(self) -> None:
+        self.selected_stage_index = add_stage(self.current_project, self.collect_params())
+        self.pm.save_project(self.current_project_id, self.current_project)
+        self.refresh_stage_list()
+        self.select_stage(self.selected_stage_index)
+
+    def duplicate_stage_ui(self) -> None:
+        self.selected_stage_index = duplicate_stage(self.current_project, self.selected_stage_index)
+        self.pm.save_project(self.current_project_id, self.current_project)
+        self.refresh_stage_list()
+        self.select_stage(self.selected_stage_index)
+
+    def delete_stage_ui(self) -> None:
+        try:
+            delete_stage(self.current_project, self.selected_stage_index)
+        except ValueError as exc:
+            messagebox.showwarning(self.t("error.delete_title"), self.t("error.delete_last_stage"), parent=self.root)
+            return
+        self.selected_stage_index = max(0, self.selected_stage_index - 1)
+        self.pm.save_project(self.current_project_id, self.current_project)
+        self.refresh_stage_list()
+        self.select_stage(self.selected_stage_index)
+
+    def toggle_stage_ui(self, index: int, enabled: bool) -> None:
+        set_stage_enabled(self.current_project, index, enabled)
+        self.pm.save_project(self.current_project_id, self.current_project)
+        self.refresh_stage_list()
+        self.refresh_preview_images()
+
+    def move_stage_ui(self, offset: int) -> None:
+        self.selected_stage_index = move_stage(self.current_project, self.selected_stage_index, offset)
+        self.pm.save_project(self.current_project_id, self.current_project)
+        self.refresh_stage_list()
+        self.select_stage(self.selected_stage_index)
+
+    def refresh_preview_images(self) -> None:
+        raw_path = self.current_raw_frame() if self.current_project_id else None
+        if raw_path is None or not raw_path.exists():
+            return
+        with Image.open(raw_path) as source:
+            original = source.convert("RGBA")
+        stages = ensure_pipeline(self.current_project)["stages"]
+        preview_stages = deepcopy(stages)
+        preview_stages[self.selected_stage_index]["frame_params"][raw_path.name] = self.collect_params()
+        stage_input = process_pipeline_image(original, preview_stages, self.selected_stage_index - 1, raw_path.name) if self.selected_stage_index > 0 else original.copy()
+        stage_result = process_pipeline_image(original, preview_stages, self.selected_stage_index, raw_path.name)
+        final = process_pipeline_image(original, preview_stages, frame_name=raw_path.name)
+        final_source = resolve_final_result_source(self.current_project, self.project_path())
+        if final_source is not None:
+            final_path = final_source.frame_path(raw_path.name)
+            if final_path.is_file():
+                with Image.open(final_path) as processed:
+                    final = processed.convert("RGBA")
+        self.preview_images = {"original": original, "input": stage_input, "result": stage_result, "final": final}
+        self._refresh_preview_canvases()
+
+    def _refresh_preview_canvases(self) -> None:
+        if hasattr(self, "left_preview_canvas"):
+            self.left_preview_canvas.set_image(self.preview_images.get(self.left_view_var.get()))
+        if hasattr(self, "right_preview_canvas"):
+            self.right_preview_canvas.set_image(self.preview_images.get(self.right_view_var.get()))
+
+    def show_preview_view(self, key: str) -> None:
+        self.cancel_eyedropper(update_status=False)
+        self.current_view = key
+        if key in ("original", "input"):
+            self.left_view_var.set(key)
+        elif key in ("result", "final"):
+            self.right_view_var.set(key)
+        self._refresh_preview_canvases()
+
+    def preview_selected_stage(self) -> None:
+        self.refresh_stage_list()
+        self.refresh_preview_images()
+        self.show_preview_view("result")
+
+    def update_frame_override_label(self) -> None:
+        if not self.current_project_id:
+            self.frame_override_var.set("")
+            return
+        stage = ensure_pipeline(self.current_project)["stages"][self.selected_stage_index]
+        key = "frame.override" if self.current_raw_frame().name in stage["frame_params"] else "frame.default"
+        self.frame_override_var.set(self.t(key))
+
+    def process_current_frame_ui(self) -> None:
+        if self.worker and self.worker.is_alive():
+            return
+        frame_name = self.current_raw_frame().name
+        set_frame_params(self.current_project, self.selected_stage_index, frame_name, self.collect_params())
+        self.pm.save_project(self.current_project_id, self.current_project)
+        self.update_frame_override_label()
+        self.worker_events = queue.Queue()
+        self.worker = PipelineFrameWorker(self.current_project, self.project_path(), frame_name, self.worker_events)
+        self.progress_var.set(0)
+        self.cancel_button.configure(state="normal")
+        self.worker.start()
+        self.root.after(50, self.poll_worker_events)
+
+    def clear_current_frame_override_ui(self) -> None:
+        frame_name = self.current_raw_frame().name
+        clear_frame_params(self.current_project, self.selected_stage_index, frame_name)
+        self.pm.save_project(self.current_project_id, self.current_project)
+        stage = ensure_pipeline(self.current_project)["stages"][self.selected_stage_index]
+        self.apply_params(stage["params"])
+        self.update_frame_override_label()
+        self.refresh_stage_list()
+        self.refresh_preview_images()
+
+    def start_eyedropper(self) -> None:
+        if self._eyedropper_active:
+            self.cancel_eyedropper()
+            return
+        canvases = self._preview_canvases()
+        if not canvases:
+            return
+        for canvas in canvases:
+            canvas.enable_eyedropper(self._eyedropper_selected, self._eyedropper_missed)
+        self._eyedropper_active = True
+        self.status_var.set(self.t("status.eyedropper_prompt"))
+
+    def _preview_canvases(self) -> tuple[ImageCanvas, ...]:
+        canvases: list[ImageCanvas] = []
+        for name in ("left_preview_canvas", "right_preview_canvas"):
+            canvas = getattr(self, name, None)
+            try:
+                if canvas is not None and canvas.winfo_exists():
+                    canvases.append(canvas)
+            except tk.TclError:
+                pass
+        return tuple(canvases)
+
+    def cancel_eyedropper(self, _event=None, *, update_status: bool = True):
+        was_active = self._eyedropper_active
+        for canvas in self._preview_canvases():
+            canvas.cancel_eyedropper()
+        self._eyedropper_active = False
+        if was_active and update_status:
+            self.status_var.set(self.t("status.eyedropper_cancelled"))
+        return "break" if _event is not None else None
+
+    def _eyedropper_missed(self) -> None:
+        if self._eyedropper_active:
+            self.status_var.set(self.t("status.eyedropper_outside"))
+
+    def _eyedropper_selected(self, rgb: tuple[int, int, int] | None) -> None:
+        self.cancel_eyedropper(update_status=False)
+        if rgb is None:
+            self.status_var.set(self.t("status.eyedropper_transparent"))
+            return
+        self.custom_color_var.set("#{:02X}{:02X}{:02X}".format(*rgb))
+        self.mode_var.set(self.t("mode.custom"))
+        self.refresh_stage_list()
+        self.refresh_preview_images()
+        self.status_var.set(self.t("status.color_picked", color=self.custom_color_var.get()))
+
+    def start_process_all(self) -> None:
+        if self.worker and self.worker.is_alive():
+            return
+        self.save_selected_stage()
+        self.worker_events = queue.Queue()
+        self.worker = PipelineWorker(self.current_project, self.project_path(), self.worker_events)
+        self.progress_var.set(0)
+        self.cancel_button.configure(state="normal")
+        self.worker.start()
+        self.root.after(50, self.poll_worker_events)
+
+    def poll_worker_events(self) -> None:
+        finished = False
+        while True:
+            try:
+                event = self.worker_events.get_nowait()
+            except queue.Empty:
+                break
+            kind = event["type"]
+            if kind == "started":
+                self.status_var.set(self.t("status.processing_frame", frame=event.get("frame_name", "")) if event.get("scope") == "frame" else self.t("status.processing"))
+            elif kind == "progress":
+                self.progress_var.set(event["percent"])
+                self.progress_text_var.set(self.t("status.progress", stage=event["stage"], frame=event["frame"], total=event["frame_total"], percent=event["percent"]))
+            elif kind == "done":
+                self.pm.save_project(self.current_project_id, self.current_project)
+                self.status_var.set(self.t("status.frame_done", frame=event.get("frame_name", "")) if event.get("scope") == "frame" else self.t("status.done"))
+                self.progress_var.set(100)
+                finished = True
+            elif kind == "cancelled":
+                self.pm.save_project(self.current_project_id, self.current_project)
+                self.status_var.set(self.t("status.cancelled"))
+                finished = True
+            elif kind == "error":
+                self.status_var.set(self.t("status.failed"))
+                messagebox.showerror(self.t("error.process_title"), event["error"], parent=self.root)
+                finished = True
+        if finished:
+            self.cancel_button.configure(state="disabled")
+            self.refresh_stage_list()
+            self.refresh_preview_images()
+        elif self.worker and self.worker.is_alive():
+            self.root.after(50, self.poll_worker_events)
+
+    def cancel_worker(self) -> None:
+        if self.worker and self.worker.is_alive():
+            self.worker.cancel()
+            self.status_var.set(self.t("status.cancelling"))
+
+    def _pipeline_source_dir(self) -> Path:
+        source = resolve_pipeline_result_source(self.current_project, self.project_path())
+        if source is not None:
+            return source.directory
+        raise ValueError(self.t("error.run_first"))
+
+    def run_equal_grid(self) -> None:
+        request = EqualGridDialog(self.root, self.t).show()
+        if request is None:
+            return
+        try:
+            normalize_equal_grid(Path(request["source"]), Path(request["output"]), int(request["rows"]), int(request["cols"]))
+            self.status_var.set(self.t("status.equal_grid_done"))
+        except Exception as exc:
+            messagebox.showerror(self.t("error.equal_grid_title"), str(exc), parent=self.root)
+
+    def run_trim(self) -> None:
+        try:
+            source = resolve_pipeline_result_source(self.current_project, self.project_path())
+            if source is None:
+                raise ValueError(self.t("error.run_first"))
+            threshold = simpledialog.askinteger(self.t("dialog.alpha_threshold"), self.t("dialog.alpha_threshold"), minvalue=0, maxvalue=255, initialvalue=8, parent=self.root)
+            padding = simpledialog.askinteger(self.t("dialog.padding"), self.t("dialog.padding"), minvalue=0, initialvalue=0, parent=self.root)
+            if threshold is None or padding is None:
+                return
+            metadata = trim_frames(source.directory, self.project_path() / "04_trimmed", threshold, padding, source.signature)
+            self.current_project["trim"] = metadata
+            self.pm.save_project(self.current_project_id, self.current_project)
+            self.status_var.set(self.t("status.trimmed", count=metadata["frame_count"]))
+            self.refresh_preview_images()
+        except Exception as exc:
+            messagebox.showerror(self.t("error.trim_title"), str(exc), parent=self.root)
+
+    def run_align(self) -> None:
+        try:
+            source = resolve_pre_alignment_source(self.current_project, self.project_path())
+            if source is None:
+                raise ValueError(self.t("error.run_first"))
+            align_labels = {self.t(f"align.{key}"): key for key in ("none", "center", "bottom_center")}
+            selected = simpledialog.askstring(self.t("dialog.align_mode"), self.t("dialog.align_prompt"), initialvalue=self.t("align.center"), parent=self.root)
+            if not selected:
+                return
+            mode = align_labels.get(selected, selected if selected in align_labels.values() else "center")
+            metadata = align_frames(source.directory, self.project_path() / "05_aligned", mode=mode, alpha_threshold=8, source_signature=source.signature)
+            self.current_project["align"] = metadata
+            self.pm.save_project(self.current_project_id, self.current_project)
+            self.status_var.set(self.t("status.aligned", count=metadata["frame_count"]))
+            self.refresh_preview_images()
+        except Exception as exc:
+            messagebox.showerror(self.t("error.align_title"), str(exc), parent=self.root)
+
+    def run_export(self) -> None:
+        try:
+            source = resolve_final_result_source(self.current_project, self.project_path())
+            if source is None:
+                raise ValueError(self.t("error.run_first"))
+            if self.current_project.get("project_type") == "video":
+                metadata = export_png_frame_sequence(source, self.project_path() / "exports" / "final_frames")
+                output_directory = Path(metadata["directory"])
+                if not output_directory.is_dir():
+                    raise FileNotFoundError(output_directory)
+                if len(list(output_directory.glob("frame_*.png"))) != int(metadata["frame_count"]):
+                    raise ValueError(self.t("error.export_frame_count"))
+                self.current_project["exports"] = metadata
+                self.pm.save_project(self.current_project_id, self.current_project)
+                self.status_var.set(self.t("status.exported", path=metadata["directory"]))
+                self.root.after_idle(self._open_output_directory, output_directory)
+                return
+            name = simpledialog.askstring(self.t("dialog.filename"), self.t("dialog.output_png"), initialvalue="sheet_transparent.png", parent=self.root)
+            if not name:
+                return
+            metadata = export_sheet(source.directory, self.project_path() / "exports", int(self.current_project.get("rows", 1)), int(self.current_project.get("cols", 1)), name)
+            output_file = Path(metadata["sheet"])
+            if not output_file.is_file():
+                raise FileNotFoundError(output_file)
+            self.current_project["exports"] = metadata
+            self.pm.save_project(self.current_project_id, self.current_project)
+            self.status_var.set(self.t("status.exported", path=metadata["sheet"]))
+            self.root.after_idle(self._open_output_directory, output_file.parent)
+        except Exception as exc:
+            messagebox.showerror(self.t("error.export_title"), str(exc), parent=self.root)
+
+    def _open_output_directory(self, output_directory: Path) -> None:
+        try:
+            os.startfile(str(output_directory))
+        except OSError as exc:
+            self.status_var.set(self.t("status.open_folder_failed", error=exc))
+
+    def save_preset_ui(self) -> None:
+        path = filedialog.asksaveasfilename(title=self.t("dialog.save_preset"), initialdir=self.presets_dir, defaultextension=".json", filetypes=[("JSON", "*.json")])
+        if path:
+            save_preset(Path(path), self.collect_params())
+
+    def load_preset_ui(self) -> None:
+        path = filedialog.askopenfilename(title=self.t("dialog.load_preset"), initialdir=self.presets_dir, filetypes=[("JSON", "*.json")])
+        if path:
+            self.apply_params(load_preset(Path(path)))
+            self.refresh_preview_images()
+
+    def open_project_folder(self) -> None:
+        os.startfile(self.project_path())

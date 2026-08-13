@@ -1,0 +1,34 @@
+GameAssetKeyer v1.0.3 - Third-Party Notices
+============================================
+
+GameAssetKeyer source files are licensed separately under MPL-2.0.
+The Windows distribution also contains third-party components governed by
+their own licenses. Those components are not relicensed under MPL-2.0.
+
+The build process collects the complete applicable license files into the
+THIRD_PARTY_LICENSES directory in the Windows distribution.
+
+Included runtime/build components
+---------------------------------
+
+- CPython 3.14.3 and its Windows runtime files
+- Tcl/Tk 8.6.15
+- NumPy 2.4.4, including the bundled OpenBLAS and other vendored components
+- Pillow 12.2.0
+- opencv-python-headless 4.13.0.92, including its bundled OpenCV video I/O /
+  FFmpeg component and the wheel's third-party license notices
+- PyInstaller 6.21.0 bootloader
+
+See THIRD_PARTY_LICENSES for the authoritative license texts distributed by
+the corresponding upstream packages and runtime.
+
+Upstream projects
+-----------------
+
+CPython: https://www.python.org/
+Tcl/Tk: https://www.tcl.tk/
+NumPy: https://numpy.org/
+Pillow: https://python-pillow.org/
+OpenCV: https://opencv.org/
+FFmpeg: https://ffmpeg.org/
+PyInstaller: https://pyinstaller.org/

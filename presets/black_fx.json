@@ -1,0 +1,15 @@
+{
+  "target_mode": "black",
+  "custom_color": "#000000",
+  "intensity": 4,
+  "background_threshold": 0.05,
+  "foreground_threshold": 0.3,
+  "feather_radius": 1.5,
+  "edge_erode": 0,
+  "min_hole_size": 4,
+  "alpha_gamma": 1.0,
+  "saturation_protect": 0.35,
+  "output_alpha": 1.0,
+  "keep_sparks": true,
+  "enable_hole_punch": true
+}

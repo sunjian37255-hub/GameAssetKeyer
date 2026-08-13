@@ -1,0 +1,36 @@
+name: Feature request
+description: Suggest an improvement for GameAssetKeyer.
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please describe the workflow problem first. This makes it easier to evaluate a focused solution.
+  - type: textarea
+    id: workflow
+    attributes:
+      label: Workflow problem
+      description: What game-asset task is difficult or impossible today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed improvement
+      description: Explain the behavior you would like to see.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Describe any current workaround or alternative approach.
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope check
+      options:
+        - label: This request is related to offline 2D game-asset keying, processing, or export.
+          required: true

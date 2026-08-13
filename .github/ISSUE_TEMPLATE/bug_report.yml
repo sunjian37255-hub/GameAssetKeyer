@@ -1,0 +1,83 @@
+name: Bug report
+description: Report a reproducible problem in GameAssetKeyer.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve GameAssetKeyer. Please remove personal paths, private project names, and sensitive files before posting.
+  - type: input
+    id: version
+    attributes:
+      label: GameAssetKeyer version
+      description: For example, v1.0.0 Windows x64.
+      placeholder: v1.0.3
+    validations:
+      required: true
+  - type: dropdown
+    id: source
+    attributes:
+      label: How are you running the application?
+      options:
+        - Official Windows Release ZIP
+        - From source
+        - Custom build
+    validations:
+      required: true
+  - type: dropdown
+    id: input_type
+    attributes:
+      label: Input type
+      options:
+        - Single PNG
+        - Sprite Sheet
+        - Video
+        - Equal-grid expansion utility
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Describe what happened.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: Describe what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Create a Sprite Sheet project...
+        2. Add a Stage...
+        3. Export Final Result...
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include Windows version, display scaling, and source asset type when relevant.
+      placeholder: Windows 11, 125% scaling, Sprite Sheet PNG
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Logs or screenshots
+      description: Attach useful evidence after removing sensitive information. Do not upload private assets unless you have permission.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist
+      options:
+        - label: I searched existing issues for the same problem.
+          required: true
+        - label: I removed credentials, private paths, and other sensitive information from this report.
+          required: true
