@@ -1,4 +1,4 @@
-GameAssetKeyer v1.0.3 - Third-Party Notices
+GameAssetKeyer v1.1.0 - Third-Party Notices
 ============================================
 
 GameAssetKeyer source files are licensed separately under MPL-2.0.

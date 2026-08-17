@@ -15,6 +15,16 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 from PIL import Image
 
 from .align_utils import align_frames
+from .animation_preview import (
+    AnimationPreviewError,
+    AnimationSource,
+    PreviewFrameCache,
+    fps_interval_ms,
+    next_frame_index,
+    read_frame,
+    resolve_animation_source,
+    validate_fps,
+)
 from .branding import APP_NAME
 from .color_key_processor import DEFAULT_PARAMS, intensity_params
 from .equal_grid_utils import normalize_equal_grid
@@ -44,7 +54,22 @@ from .sheet_exporter import export_sheet
 from .trim_utils import trim_frames
 from .ui.create_project_dialog import CreateProjectDialog
 from .ui.equal_grid_dialog import EqualGridDialog
+from .ui.frame_sequence_composer_dialog import FrameSequenceComposerDialog
 from .ui.project_name_dialog import ProjectNameDialog
+from .ui.theme import (
+    ACCENT,
+    ACCENT_HOVER,
+    BG_DEFAULT,
+    BG_CARD,
+    BG_INPUT,
+    BG_PANEL,
+    BG_ROOT,
+    DISABLED_BG,
+    DISABLED_TEXT,
+    TEXT_MUTED,
+    TEXT_ON_ACCENT,
+    TEXT_PRIMARY,
+)
 from .ui.widgets import ImageCanvas, ScrollableFrame
 from .workers import PipelineFrameWorker, PipelineWorker
 
@@ -71,11 +96,20 @@ class GameAssetKeyerApp:
         self.worker_events: queue.Queue[dict] = queue.Queue()
         self.preview_images: dict[str, Image.Image] = {}
         self.current_view = "result"
+        self._animation_playing = False
+        self._animation_after_id: str | None = None
+        self._animation_frame_index = 0
+        self._animation_source: AnimationSource | None = None
+        self._animation_restore_frame = 1
+        self._animation_restore_view = "result"
+        self._animation_restore_project_id: str | None = None
+        self._animation_cache = PreviewFrameCache(max_items=32)
         self._stage_loaded = False
         self._eyedropper_active = False
         self._configure_style()
         self._create_variables()
         self._build_shell()
+        self.root.protocol("WM_DELETE_WINDOW", self.close)
         self.root.bind("<Escape>", self.cancel_eyedropper, add="+")
         self.show_home()
 
@@ -86,23 +120,25 @@ class GameAssetKeyerApp:
         style = ttk.Style(self.root)
         if "clam" in style.theme_names():
             style.theme_use("clam")
-        self.root.configure(background="#171a1f")
-        style.configure(".", background="#252a31", foreground="#e7e9ed", fieldbackground="#1d2127", font=("Segoe UI", 10))
-        style.configure("TFrame", background="#252a31")
-        style.configure("Panel.TFrame", background="#20242b")
-        style.configure("Card.TFrame", background="#2d333c", relief="flat")
-        style.configure("TLabel", background="#252a31", foreground="#e7e9ed")
-        style.configure("Muted.TLabel", foreground="#aeb5bf")
+        self.root.configure(background=BG_ROOT)
+        style.configure(".", background=BG_DEFAULT, foreground=TEXT_PRIMARY, fieldbackground=BG_INPUT, font=("Segoe UI", 10))
+        style.configure("TFrame", background=BG_DEFAULT)
+        style.configure("Panel.TFrame", background=BG_PANEL)
+        style.configure("Card.TFrame", background=BG_CARD, relief="flat")
+        style.configure("TLabel", background=BG_DEFAULT, foreground=TEXT_PRIMARY)
+        style.configure("Muted.TLabel", foreground=TEXT_MUTED)
         style.configure("Title.TLabel", font=("Segoe UI Semibold", 18))
         style.configure("Section.TLabel", font=("Segoe UI Semibold", 11))
         style.configure("TButton", padding=(10, 7))
-        style.configure("Primary.TButton", background="#3b82f6", foreground="white")
-        style.map("Primary.TButton", background=[("active", "#5595f7"), ("disabled", "#475569")])
+        style.configure("Primary.TButton", background=ACCENT, foreground=TEXT_ON_ACCENT)
+        style.map("Primary.TButton", background=[("active", ACCENT_HOVER), ("disabled", DISABLED_BG)], foreground=[("disabled", DISABLED_TEXT)])
         style.configure("Stage.TButton", anchor="w", padding=(10, 8))
-        style.configure("Selected.Stage.TButton", background="#3b82f6", foreground="white", anchor="w", padding=(10, 8))
-        style.configure("Treeview", background="#1d2127", fieldbackground="#1d2127", foreground="#e7e9ed", rowheight=28)
-        style.configure("TNotebook", background="#171a1f")
-        style.configure("TProgressbar", background="#3b82f6")
+        style.configure("Selected.Stage.TButton", background=ACCENT, foreground=TEXT_ON_ACCENT, anchor="w", padding=(10, 8))
+        style.configure("Disabled.Stage.TButton", background=BG_CARD, foreground=DISABLED_TEXT, anchor="w", padding=(10, 8))
+        style.map("Disabled.Stage.TButton", foreground=[("active", DISABLED_TEXT), ("disabled", DISABLED_TEXT)])
+        style.configure("Treeview", background=BG_INPUT, fieldbackground=BG_INPUT, foreground=TEXT_PRIMARY, rowheight=28)
+        style.configure("TNotebook", background=BG_ROOT)
+        style.configure("TProgressbar", background=ACCENT)
 
     def _create_variables(self) -> None:
         self.status_var = tk.StringVar(value=self.t("status.ready"))
@@ -125,6 +161,7 @@ class GameAssetKeyerApp:
         self.enable_hole_var = tk.BooleanVar(value=True)
         self.left_view_var = tk.StringVar(value="input")
         self.right_view_var = tk.StringVar(value="result")
+        self.animation_fps_var = tk.StringVar(value="12")
         self._create_dialog: CreateProjectDialog | None = None
 
     def _build_shell(self) -> None:
@@ -155,6 +192,7 @@ class GameAssetKeyerApp:
         return next((key for key, label in self.mode_labels().items() if label == current), "black")
 
     def on_language_change(self, _event=None) -> None:
+        self.stop_animation()
         selected = next((code for code, name in LANGUAGE_NAMES.items() if name == self.language_combo.get()), "en_US")
         if selected == self.i18n.locale:
             return
@@ -181,6 +219,7 @@ class GameAssetKeyerApp:
         self.status_var.set(self.t("status.ready"))
 
     def _clear_page(self) -> None:
+        self.stop_animation()
         self.cancel_eyedropper(update_status=False)
         for child in self.page.winfo_children():
             child.destroy()
@@ -205,12 +244,18 @@ class GameAssetKeyerApp:
             ttk.Button(card, text=self.t("home.start"), style="Primary.TButton", command=command).pack(anchor="w")
         standalone = ttk.LabelFrame(home, text=self.t("home.standalone_tools"), padding=12)
         standalone.pack(fill="x", pady=(18, 0))
-        equal_grid = ttk.Frame(standalone, padding=12, style="Card.TFrame")
-        equal_grid.pack(fill="x")
-        equal_grid.columnconfigure(0, weight=1)
-        ttk.Label(equal_grid, text=self.t("tools.equal_grid"), style="Section.TLabel").grid(row=0, column=0, sticky="w")
-        ttk.Label(equal_grid, text=self.t("home.equal_grid_subtitle"), style="Muted.TLabel").grid(row=1, column=0, sticky="w", pady=(4, 0))
-        ttk.Button(equal_grid, text=self.t("home.start"), command=self.run_equal_grid).grid(row=0, column=1, rowspan=2, sticky="e", padx=(18, 0))
+        standalone.columnconfigure(0, weight=1, uniform="standalone")
+        standalone.columnconfigure(1, weight=1, uniform="standalone")
+        for column, title_key, subtitle_key, command in (
+            (0, "tools.equal_grid", "home.equal_grid_subtitle", self.run_equal_grid),
+            (1, "tools.sequence_composer", "home.sequence_composer_subtitle", self.run_sequence_composer),
+        ):
+            card = ttk.Frame(standalone, padding=12, style="Card.TFrame")
+            card.grid(row=0, column=column, sticky="nsew", padx=(0, 6) if column == 0 else (6, 0))
+            card.columnconfigure(0, weight=1)
+            ttk.Label(card, text=self.t(title_key), style="Section.TLabel").grid(row=0, column=0, sticky="w")
+            ttk.Label(card, text=self.t(subtitle_key), style="Muted.TLabel", wraplength=360).grid(row=1, column=0, sticky="w", pady=(4, 12))
+            ttk.Button(card, text=self.t("home.start"), command=command).grid(row=0, column=1, rowspan=2, sticky="e", padx=(12, 0))
         recent = ttk.LabelFrame(home, text=self.t("recent.title"), padding=12)
         recent.pack(fill="both", expand=True, pady=(18, 0))
         self.recent_tree = ttk.Treeview(recent, columns=("type", "frames"), show="tree headings")
@@ -226,10 +271,10 @@ class GameAssetKeyerApp:
         self.recent_project_menu = tk.Menu(
             self.recent_tree,
             tearoff=False,
-            background="#252a31",
-            foreground="#e7e9ed",
-            activebackground="#3b82f6",
-            activeforeground="white",
+            background=BG_DEFAULT,
+            foreground=TEXT_PRIMARY,
+            activebackground=ACCENT,
+            activeforeground=TEXT_ON_ACCENT,
         )
         self.recent_project_menu.add_command(label=self.t("project.menu.open"), command=self.open_recent_project)
         self.recent_project_menu.add_command(label=self.t("project.menu.rename"), command=self.rename_recent_project)
@@ -328,6 +373,7 @@ class GameAssetKeyerApp:
         self.status_var.set(self.t("status.project_deleted", name=project.get("name", project_id)))
 
     def load_project(self, project_id: str) -> None:
+        self.stop_animation()
         self.current_project_id = project_id
         self.current_project = self.pm.load_project(project_id)
         ensure_pipeline(self.current_project)
@@ -342,6 +388,7 @@ class GameAssetKeyerApp:
         self.status_var.set(self.t("status.opened", name=self.current_project.get("name", project_id)))
 
     def build_workbench(self) -> None:
+        self.stop_animation()
         self._clear_page()
         outer = ttk.Frame(self.page, style="Panel.TFrame")
         outer.pack(fill="both", expand=True)
@@ -371,7 +418,7 @@ class GameAssetKeyerApp:
         ttk.Label(parent, text=self.t("project.frames"), style="Muted.TLabel").pack(anchor="w", pady=(2, 8))
         frame_box = ttk.Frame(parent)
         frame_box.pack(fill="both", expand=True)
-        self.frame_listbox = tk.Listbox(frame_box, background="#1d2127", foreground="#e7e9ed", selectbackground="#3b82f6", borderwidth=0, highlightthickness=0)
+        self.frame_listbox = tk.Listbox(frame_box, background=BG_INPUT, foreground=TEXT_PRIMARY, selectbackground=ACCENT, borderwidth=0, highlightthickness=0)
         scrollbar = ttk.Scrollbar(frame_box, orient="vertical", command=self.frame_listbox.yview)
         self.frame_listbox.configure(yscrollcommand=scrollbar.set)
         self.frame_listbox.pack(side="left", fill="both", expand=True)
@@ -389,7 +436,7 @@ class GameAssetKeyerApp:
         self.left_preview_canvas = ImageCanvas(left_panel)
         self.left_preview_canvas.grid(row=1, column=0, sticky="nsew")
         self.right_preview_canvas = ImageCanvas(right_panel)
-        self.right_preview_canvas.grid(row=1, column=0, sticky="nsew")
+        self.right_preview_canvas.grid(row=2, column=0, sticky="nsew")
         # Preserve the public attribute used by the eyedropper and existing integrations.
         self.preview_canvas = self.left_preview_canvas
 
@@ -397,7 +444,7 @@ class GameAssetKeyerApp:
         panel = ttk.Frame(parent, style="Panel.TFrame")
         panel.grid(row=0, column=column, sticky="nsew", padx=(0, 4) if column == 0 else (4, 0))
         panel.columnconfigure(0, weight=1)
-        panel.rowconfigure(1, weight=1)
+        panel.rowconfigure(1 if column == 0 else 2, weight=1)
         toolbar = ttk.Frame(panel)
         toolbar.grid(row=0, column=0, sticky="ew", pady=(0, 8))
         for button_column, key in enumerate(keys):
@@ -412,6 +459,22 @@ class GameAssetKeyerApp:
             )
             button.grid(row=0, column=button_column, sticky="ew", padx=(0, 4) if button_column == 0 else 0)
             self.view_buttons[key] = button
+        if column == 1:
+            controls = ttk.Frame(panel)
+            controls.grid(row=1, column=0, sticky="ew", pady=(0, 8))
+            controls.columnconfigure(0, weight=1)
+            controls.columnconfigure(1, weight=1)
+            controls.columnconfigure(2, weight=0)
+            controls.columnconfigure(3, weight=0)
+            controls.columnconfigure(4, weight=0)
+            self.animation_play_button = ttk.Button(controls, text=self.t("animation.play"), command=self.play_animation)
+            self.animation_play_button.grid(row=0, column=0, sticky="ew", padx=(0, 4))
+            self.animation_stop_button = ttk.Button(controls, text=self.t("animation.stop"), command=self.stop_animation, state="disabled")
+            self.animation_stop_button.grid(row=0, column=1, sticky="ew", padx=(0, 8))
+            ttk.Label(controls, text=self.t("animation.fps")).grid(row=0, column=2, sticky="e", padx=(0, 4))
+            self.animation_fps_spinbox = ttk.Spinbox(controls, from_=1, to=60, width=4, textvariable=self.animation_fps_var)
+            self.animation_fps_spinbox.grid(row=0, column=3, sticky="e")
+            ttk.Label(controls, text=self.t("animation.fps_suffix")).grid(row=0, column=4, sticky="w", padx=(3, 0))
         return panel
 
     def _build_pipeline_panel(self, parent: ttk.Frame) -> None:
@@ -484,10 +547,18 @@ class GameAssetKeyerApp:
 
     def _build_tool_bar(self, parent: ttk.Frame) -> ttk.Frame:
         tools = ttk.Frame(parent, padding=(10, 8), style="Panel.TFrame")
-        ttk.Label(tools, text=self.t("tools.title")).pack(side="left", padx=(0, 8))
+        tools.columnconfigure(0, weight=1)
+        tools.columnconfigure(1, weight=1)
         export_key = "tools.export_video" if self.current_project.get("project_type") == "video" else "tools.export"
-        for text, command in [(self.t("tools.trim"), self.run_trim), (self.t("tools.align"), self.run_align), (self.t(export_key), self.run_export)]:
-            ttk.Button(tools, text=text, command=command).pack(side="left", padx=(0, 4))
+        post_process = ttk.Frame(tools)
+        post_process.grid(row=0, column=0, sticky="w", padx=(0, 12))
+        ttk.Label(post_process, text=self.t("tools.post_process"), style="Muted.TLabel").pack(side="left", padx=(0, 8))
+        for text, command in [(self.t("tools.trim"), self.run_trim), (self.t("tools.align"), self.run_align)]:
+            ttk.Button(post_process, text=text, command=command).pack(side="left", padx=(0, 4))
+        export = ttk.Frame(tools)
+        export.grid(row=0, column=1, sticky="e")
+        ttk.Label(export, text=self.t("tools.export_group"), style="Muted.TLabel").pack(side="left", padx=(0, 8))
+        ttk.Button(export, text=self.t(export_key), style="Primary.TButton", command=self.run_export).pack(side="left")
         return tools
 
     def project_path(self) -> Path:
@@ -503,6 +574,8 @@ class GameAssetKeyerApp:
             self.frame_listbox.selection_set(0)
 
     def on_frame_select(self, _event=None) -> None:
+        if self._animation_playing:
+            self.stop_animation()
         selected = self.frame_listbox.curselection()
         if selected:
             self.cancel_eyedropper(update_status=False)
@@ -546,10 +619,16 @@ class GameAssetKeyerApp:
             custom = stage["params"]["custom_color"] if mode_key == "custom" else ""
             status = self.t(f"stage.{stage['status']}")
             text = f"{self.t('stage.label', number=index + 1)} · {mode} {custom} · {status}"
-            style = "Selected.Stage.TButton" if index == self.selected_stage_index else "Stage.TButton"
+            if index == self.selected_stage_index:
+                style = "Selected.Stage.TButton"
+            elif not stage.get("enabled", True):
+                style = "Disabled.Stage.TButton"
+            else:
+                style = "Stage.TButton"
             ttk.Button(row, text=text, style=style, command=lambda i=index: self.select_stage(i)).pack(side="left", fill="x", expand=True)
 
     def select_stage(self, index: int) -> None:
+        self.stop_animation()
         self.cancel_eyedropper(update_status=False)
         self.selected_stage_index = index
         stage = ensure_pipeline(self.current_project)["stages"][index]
@@ -622,18 +701,21 @@ class GameAssetKeyerApp:
             self.fg_threshold_var.set(round(values["high"], 3))
 
     def add_stage_ui(self) -> None:
+        self.stop_animation()
         self.selected_stage_index = add_stage(self.current_project, self.collect_params())
         self.pm.save_project(self.current_project_id, self.current_project)
         self.refresh_stage_list()
         self.select_stage(self.selected_stage_index)
 
     def duplicate_stage_ui(self) -> None:
+        self.stop_animation()
         self.selected_stage_index = duplicate_stage(self.current_project, self.selected_stage_index)
         self.pm.save_project(self.current_project_id, self.current_project)
         self.refresh_stage_list()
         self.select_stage(self.selected_stage_index)
 
     def delete_stage_ui(self) -> None:
+        self.stop_animation()
         try:
             delete_stage(self.current_project, self.selected_stage_index)
         except ValueError as exc:
@@ -645,12 +727,14 @@ class GameAssetKeyerApp:
         self.select_stage(self.selected_stage_index)
 
     def toggle_stage_ui(self, index: int, enabled: bool) -> None:
+        self.stop_animation()
         set_stage_enabled(self.current_project, index, enabled)
         self.pm.save_project(self.current_project_id, self.current_project)
         self.refresh_stage_list()
         self.refresh_preview_images()
 
     def move_stage_ui(self, offset: int) -> None:
+        self.stop_animation()
         self.selected_stage_index = move_stage(self.current_project, self.selected_stage_index, offset)
         self.pm.save_project(self.current_project_id, self.current_project)
         self.refresh_stage_list()
@@ -680,10 +764,134 @@ class GameAssetKeyerApp:
     def _refresh_preview_canvases(self) -> None:
         if hasattr(self, "left_preview_canvas"):
             self.left_preview_canvas.set_image(self.preview_images.get(self.left_view_var.get()))
-        if hasattr(self, "right_preview_canvas"):
+        if hasattr(self, "right_preview_canvas") and not self._animation_playing:
             self.right_preview_canvas.set_image(self.preview_images.get(self.right_view_var.get()))
 
+    def _set_animation_controls(self, playing: bool) -> None:
+        play_state = "disabled" if playing else "normal"
+        stop_state = "normal" if playing else "disabled"
+        for name, state in (
+            ("animation_play_button", play_state),
+            ("animation_stop_button", stop_state),
+            ("animation_fps_spinbox", "disabled" if playing else "normal"),
+        ):
+            widget = getattr(self, name, None)
+            if widget is not None:
+                try:
+                    widget.configure(state=state)
+                except tk.TclError:
+                    pass
+
+    def _animation_error_text(self, error: Exception) -> str:
+        key = getattr(error, "message_key", "error.animation_source")
+        try:
+            return self.t(key)
+        except Exception:
+            return str(error)
+
+    def play_animation(self) -> None:
+        """Play the current right-side source over the existing Result canvas."""
+
+        if self._animation_playing:
+            return
+        try:
+            fps = validate_fps(self.animation_fps_var.get())
+            source_key = "stage_result" if self.right_view_var.get() == "result" else "final_result"
+            source = resolve_animation_source(
+                self.current_project,
+                self.project_path(),
+                source_key,
+                self.selected_stage_index,
+            )
+        except (AnimationPreviewError, OSError, ValueError) as exc:
+            messagebox.showerror(self.t("error.animation_title"), self._animation_error_text(exc), parent=self.root)
+            return
+
+        if not source.frame_names:
+            messagebox.showerror(self.t("error.animation_title"), self.t("error.animation_source"), parent=self.root)
+            return
+        self._animation_restore_frame = self.current_frame_index
+        self._animation_restore_view = self.right_view_var.get()
+        self._animation_restore_project_id = self.current_project_id
+        self._animation_source = source
+        self._animation_frame_index = 0
+        self._animation_cache.clear()
+        self._animation_playing = True
+        self._set_animation_controls(True)
+        try:
+            self._show_animation_frame()
+            self._animation_after_id = self.root.after(fps_interval_ms(fps), self._animation_tick)
+        except (AnimationPreviewError, OSError, tk.TclError, ValueError) as exc:
+            self.stop_animation(error=exc)
+
+    def _show_animation_frame(self) -> None:
+        if not self._animation_playing or self._animation_source is None:
+            return
+        image = read_frame(self._animation_source, self._animation_frame_index, self._animation_cache)
+        try:
+            self.right_preview_canvas.set_image(image)
+        finally:
+            image.close()
+
+    def _animation_tick(self) -> None:
+        self._animation_after_id = None
+        if not self._animation_playing or self._animation_source is None:
+            return
+        try:
+            next_index = next_frame_index(self._animation_frame_index, self._animation_source.frame_count, loop=False)
+            if next_index is None:
+                self.stop_animation()
+                return
+            self._animation_frame_index = next_index
+            self._show_animation_frame()
+            fps = validate_fps(self.animation_fps_var.get())
+            self._animation_after_id = self.root.after(fps_interval_ms(fps), self._animation_tick)
+        except (AnimationPreviewError, OSError, tk.TclError, ValueError) as exc:
+            self.stop_animation(error=exc)
+
+    def stop_animation(self, error: Exception | None = None) -> None:
+        """Cancel playback and restore the static frame/view without selection churn."""
+
+        after_id = self._animation_after_id
+        self._animation_after_id = None
+        if after_id is not None:
+            try:
+                self.root.after_cancel(after_id)
+            except tk.TclError:
+                pass
+        was_playing = self._animation_playing
+        restore_project_id = self._animation_restore_project_id
+        restore_frame = self._animation_restore_frame
+        restore_view = self._animation_restore_view
+        self._animation_playing = False
+        self._animation_source = None
+        self._animation_frame_index = 0
+        self._animation_cache.clear()
+        self._set_animation_controls(False)
+        if was_playing and self.current_project_id == restore_project_id and self.current_project_id:
+            self.current_frame_index = restore_frame
+            self.right_view_var.set(restore_view)
+            self.current_view = restore_view
+            try:
+                self.refresh_preview_images()
+            except (OSError, tk.TclError, ValueError):
+                # A page/project may be in the middle of being destroyed or
+                # replaced; the callback is still safely gone.
+                pass
+        if error is not None:
+            messagebox.showerror(self.t("error.animation_title"), self._animation_error_text(error), parent=self.root)
+
+    def close(self) -> None:
+        self.stop_animation()
+        self.cancel_eyedropper(update_status=False)
+        self.cancel_worker()
+        try:
+            self.root.destroy()
+        except tk.TclError:
+            pass
+
     def show_preview_view(self, key: str) -> None:
+        self.stop_animation()
         self.cancel_eyedropper(update_status=False)
         self.current_view = key
         if key in ("original", "input"):
@@ -693,6 +901,7 @@ class GameAssetKeyerApp:
         self._refresh_preview_canvases()
 
     def preview_selected_stage(self) -> None:
+        self.stop_animation()
         self.refresh_stage_list()
         self.refresh_preview_images()
         self.show_preview_view("result")
@@ -706,6 +915,7 @@ class GameAssetKeyerApp:
         self.frame_override_var.set(self.t(key))
 
     def process_current_frame_ui(self) -> None:
+        self.stop_animation()
         if self.worker and self.worker.is_alive():
             return
         frame_name = self.current_raw_frame().name
@@ -720,6 +930,7 @@ class GameAssetKeyerApp:
         self.root.after(50, self.poll_worker_events)
 
     def clear_current_frame_override_ui(self) -> None:
+        self.stop_animation()
         frame_name = self.current_raw_frame().name
         clear_frame_params(self.current_project, self.selected_stage_index, frame_name)
         self.pm.save_project(self.current_project_id, self.current_project)
@@ -777,6 +988,7 @@ class GameAssetKeyerApp:
         self.status_var.set(self.t("status.color_picked", color=self.custom_color_var.get()))
 
     def start_process_all(self) -> None:
+        self.stop_animation()
         if self.worker and self.worker.is_alive():
             return
         self.save_selected_stage()
@@ -831,7 +1043,14 @@ class GameAssetKeyerApp:
             return source.directory
         raise ValueError(self.t("error.run_first"))
 
+    def run_sequence_composer(self) -> None:
+        # The composer is a standalone Toplevel workflow; animation playback
+        # belongs to the workbench and must not survive a page transition.
+        self.stop_animation()
+        FrameSequenceComposerDialog(self.root, self.t).show()
+
     def run_equal_grid(self) -> None:
+        self.stop_animation()
         request = EqualGridDialog(self.root, self.t).show()
         if request is None:
             return
@@ -842,6 +1061,7 @@ class GameAssetKeyerApp:
             messagebox.showerror(self.t("error.equal_grid_title"), str(exc), parent=self.root)
 
     def run_trim(self) -> None:
+        self.stop_animation()
         try:
             source = resolve_pipeline_result_source(self.current_project, self.project_path())
             if source is None:
@@ -859,6 +1079,7 @@ class GameAssetKeyerApp:
             messagebox.showerror(self.t("error.trim_title"), str(exc), parent=self.root)
 
     def run_align(self) -> None:
+        self.stop_animation()
         try:
             source = resolve_pre_alignment_source(self.current_project, self.project_path())
             if source is None:
@@ -877,6 +1098,7 @@ class GameAssetKeyerApp:
             messagebox.showerror(self.t("error.align_title"), str(exc), parent=self.root)
 
     def run_export(self) -> None:
+        self.stop_animation()
         try:
             source = resolve_final_result_source(self.current_project, self.project_path())
             if source is None:

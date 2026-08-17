@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.1.0] - 2026-08-17
+
+### Added
+
+- Inline Animation Preview in the existing Stage Result / Final Result canvas with adjustable 1–60 FPS playback.
+- PNG Sequence Composer with natural ordering, center or bottom-center placement, transparent padding, and RGBA output.
+
+### Improved
+
+- Home standalone tools, workbench hierarchy, stage presentation, and compact DPI-aware preview controls.
+- English and Simplified Chinese coverage for the new workflows.
+
 ## [1.0.3] - 2026-08-14
 
 ### Changed

@@ -41,6 +41,12 @@ Background removal is often only one step in preparing game-ready animation asse
 - Unified trimming and center or bottom-center alignment
 - Sprite Sheet rebuild and transparent export
 - Standalone equal-grid expansion utility
+- Real-time animation preview for processed frame sequences
+- Adjustable playback FPS without changing the selected frame
+- PNG Sequence → Sprite Sheet Composer
+- Natural frame ordering for sequence inputs
+- Center / bottom-center frame placement
+- Transparent cell padding
 - English and Simplified Chinese application UI
 - Fully offline processing with no AI runtime and no file uploads
 
@@ -114,7 +120,7 @@ Post-processing results carry source signatures. If the Pipeline changes, old tr
 
 Windows users do not need Python or `pip`.
 
-1. Download `GameAssetKeyer-v1.0.3-Windows-x64.zip` from the [Releases](../../releases) page.
+1. Download `GameAssetKeyer-v1.1.0-Windows-x64.zip` from the [Releases](../../releases) page.
 2. Extract the entire archive to a normal writable folder.
 3. Run `GameAssetKeyer.exe`.
 

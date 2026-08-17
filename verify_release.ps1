@@ -47,8 +47,8 @@ if ($license -match '(?im)^MIT License\s*$') {
     $failures.Add('Obsolete MIT root license found')
 }
 $sourceNotice = Get-Content -Raw -LiteralPath (Join-Path $root 'SOURCE.txt')
-if ($sourceNotice -notmatch [regex]::Escape('https://github.com/sunjian37255-hub/GameAssetKeyer/tree/v1.0.3')) {
-    $failures.Add('SOURCE.txt does not point to the v1.0.3 corresponding source')
+if ($sourceNotice -notmatch [regex]::Escape('https://github.com/sunjian37255-hub/GameAssetKeyer/tree/v1.1.0')) {
+    $failures.Add('SOURCE.txt does not point to the v1.1.0 corresponding source')
 }
 $thirdParty = Join-Path $root 'THIRD_PARTY_LICENSES'
 foreach ($pattern in @('CPython-3.14.3-LICENSE.txt', 'Tcl-Tk-8.6.15-license.terms', 'numpy-2.4.4', 'Pillow-12.2.0', 'opencv-python-headless-4.13.0.92', 'PyInstaller-6.21.0')) {

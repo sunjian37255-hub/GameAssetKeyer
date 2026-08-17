@@ -11,13 +11,15 @@ from typing import Callable
 
 from PIL import Image, ImageTk
 
+from .theme import BG_INPUT, BG_ROOT, CHECKER_DARK, CHECKER_LIGHT
+
 
 class ScrollableFrame(ttk.Frame):
     def __init__(self, parent, **kwargs):
         super().__init__(parent, **kwargs)
         self.columnconfigure(0, weight=1)
         self.rowconfigure(0, weight=1)
-        self.canvas = tk.Canvas(self, width=1, height=1, highlightthickness=0, background="#252a31")
+        self.canvas = tk.Canvas(self, width=1, height=1, highlightthickness=0, background=BG_INPUT)
         self.scrollbar = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
         self.content = ttk.Frame(self.canvas)
         self.window_id = self.canvas.create_window((0, 0), window=self.content, anchor="nw")
@@ -41,7 +43,7 @@ class ScrollableFrame(ttk.Frame):
 
 class ImageCanvas(tk.Canvas):
     def __init__(self, parent, **kwargs):
-        super().__init__(parent, background="#171a1f", highlightthickness=0, **kwargs)
+        super().__init__(parent, background=BG_ROOT, highlightthickness=0, **kwargs)
         self.source_image: Image.Image | None = None
         self._photo: ImageTk.PhotoImage | None = None
         self.display_box = (0, 0, 0, 0)
@@ -97,7 +99,7 @@ class ImageCanvas(tk.Canvas):
         callback(None if pixel[3] == 0 else pixel[:3])
 
     def _draw_checkerboard(self, left: int, top: int, width: int, height: int, size: int = 12) -> None:
-        colors = ("#c7cbd1", "#eef0f3")
+        colors = (CHECKER_DARK, CHECKER_LIGHT)
         for y in range(top, top + height, size):
             for x in range(left, left + width, size):
                 color = colors[((x - left) // size + (y - top) // size) % 2]

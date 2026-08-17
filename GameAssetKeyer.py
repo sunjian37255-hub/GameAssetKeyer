@@ -27,6 +27,8 @@ def run_import_check() -> int:
     import PIL
 
     from app.color_key_processor import TARGETS
+    from app.animation_preview import fps_interval_ms, resolve_animation_source
+    from app.frame_sequence_composer import compose_sprite_sheet, natural_sort_key
     from app.i18n import I18n
     from app.pipeline import make_stage, process_pipeline_image
     from app.workers import PipelineWorker
@@ -40,7 +42,15 @@ def run_import_check() -> int:
         raise RuntimeError("White key-color preset is unavailable")
     # Keep these imports and symbols live so frozen-build analysis includes the
     # normal runtime path exercised by source and release smoke checks.
-    if not callable(process_pipeline_image) or not callable(make_stage) or not issubclass(PipelineWorker, object):
+    if (
+        not callable(process_pipeline_image)
+        or not callable(make_stage)
+        or not callable(fps_interval_ms)
+        or not callable(resolve_animation_source)
+        or not callable(compose_sprite_sheet)
+        or not callable(natural_sort_key)
+        or not issubclass(PipelineWorker, object)
+    ):
         raise RuntimeError("Core runtime imports failed")
     tcl = tk.Tcl()
     print(f"{APP_NAME} import check OK")
