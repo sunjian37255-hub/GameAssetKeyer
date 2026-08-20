@@ -20,6 +20,8 @@ TARGETS = {
     "magenta": (255, 0, 255),
 }
 
+PROCESSOR_CACHE_VERSION = 2
+
 MODE_LABELS = {
     "green": ["\u6781\u4e25\u683c\u7eff / \u9c9c\u8273\u7eff", "\u4e25\u683c\u7eff", "\u6807\u51c6\u7eff", "\u5bbd\u677e\u7eff", "\u6781\u5bbd\u677e\u7eff / \u6697\u6c89\u7eff"],
     "black": ["\u6781\u4e25\u683c\u9ed1 / \u7eaf\u9ed1", "\u4e25\u683c\u9ed1", "\u6807\u51c6\u9ed1", "\u5bbd\u677e\u9ed1", "\u6781\u5bbd\u677e\u9ed1 / \u7070\u9ed1\u6b8b\u7559"],
@@ -114,16 +116,19 @@ def _process_rule_image(image: Image.Image, params: dict[str, Any], apply_hole_p
     target = np.array(parse_color(mode, cfg.get("custom_color", "#000000")), dtype=np.float32) / 255.0
     level = int(cfg.get("intensity", 3))
     ip = intensity_params(mode, level)
+    strength_scale = {1: 0.72, 2: 0.86, 3: 1.0, 4: 1.18, 5: 1.38}.get(level, 1.0)
 
     rgba = np.array(image.convert("RGBA"), dtype=np.float32) / 255.0
     rgb = rgba[..., :3]
     original_alpha = rgba[..., 3]
 
     if mode == "black":
-        brightness = np.max(rgb, axis=2)
+        target_rgb = target.reshape((1, 1, 3))
+        color_distance = np.linalg.norm(rgb - target_rgb, axis=2) / math.sqrt(3.0)
+        color_distance = np.clip(color_distance / strength_scale, 0.0, 1.0)
         low = float(cfg.get("background_threshold", ip["low"]))
         high = float(cfg.get("foreground_threshold", ip["high"]))
-        alpha = smoothstep(low, high, brightness)
+        alpha = smoothstep(low, high, color_distance)
         hsv = rgb_to_hsv_np(rgb)
         hue = hsv[..., 0]
         sat = hsv[..., 1]
@@ -150,7 +155,6 @@ def _process_rule_image(image: Image.Image, params: dict[str, Any], apply_hole_p
         if target_sat > 0.35:
             key_distance = np.maximum(key_distance, sat_miss * 0.45)
         key_distance = np.maximum(key_distance, val_dist * 0.35)
-        strength_scale = {1: 0.72, 2: 0.86, 3: 1.0, 4: 1.18, 5: 1.38}.get(level, 1.0)
         key_distance = np.clip(key_distance / strength_scale, 0.0, 1.0)
         low = clamp(float(cfg.get("background_threshold", 0.40)), 0.0, 1.0)
         high = clamp(float(cfg.get("foreground_threshold", 0.76)), 0.0, 1.0)

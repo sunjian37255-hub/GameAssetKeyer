@@ -1,9 +1,9 @@
-GameAssetKeyer v1.1.0
+GameAssetKeyer v1.1.1
 
 This binary distribution is licensed under the Mozilla Public License 2.0.
 
 Corresponding Source Code:
-https://github.com/sunjian37255-hub/GameAssetKeyer/tree/v1.1.0
+https://github.com/sunjian37255-hub/GameAssetKeyer/tree/v1.1.1
 
 License:
 https://www.mozilla.org/MPL/2.0/

@@ -18,7 +18,7 @@ from uuid import uuid4
 import numpy as np
 from PIL import Image
 
-from .color_key_processor import DEFAULT_PARAMS, process_image
+from .color_key_processor import DEFAULT_PARAMS, PROCESSOR_CACHE_VERSION, process_image
 
 PIPELINE_VERSION = 1
 ProgressCallback = Callable[[int, int, int, int], None]
@@ -108,6 +108,7 @@ def ensure_pipeline(project: dict[str, Any]) -> dict[str, Any]:
 
 def stage_signature(stage: dict[str, Any]) -> str:
     payload = {
+        "processor_cache_version": PROCESSOR_CACHE_VERSION,
         "enabled": bool(stage["enabled"]),
         "params": normalize_params(stage["params"]),
         "frame_params": {
@@ -125,7 +126,11 @@ def effective_stage_params(stage: dict[str, Any], frame_name: str | None = None)
 
 
 def frame_stage_signature(stage: dict[str, Any], frame_name: str) -> str:
-    payload = {"enabled": bool(stage["enabled"]), "params": effective_stage_params(stage, frame_name)}
+    payload = {
+        "processor_cache_version": PROCESSOR_CACHE_VERSION,
+        "enabled": bool(stage["enabled"]),
+        "params": effective_stage_params(stage, frame_name),
+    }
     return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
 
 

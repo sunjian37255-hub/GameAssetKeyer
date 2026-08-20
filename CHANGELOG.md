@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.1.1] - 2026-08-21
+
+### Fixed
+
+- Detection Strength now applies the existing color-tolerance scale to Black using normalized RGB distance to pure black.
+- Changing Black Detection Strength no longer overwrites Background or Foreground Threshold, including the `0.0 / 0.0` not-yet-configured state.
+- Processor-aware cache signatures invalidate v1.1.0 Stage results after the Black detection correction.
+
 ## [1.1.0] - 2026-08-17
 
 ### Added

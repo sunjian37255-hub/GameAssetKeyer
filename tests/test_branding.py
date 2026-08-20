@@ -25,7 +25,7 @@ class BrandingTests(unittest.TestCase):
         self.assertFalse((root / ("Sprite" + "SheetCleaner.py")).exists())
         self.assertTrue((root / "GameAssetKeyer.spec").is_file())
         self.assertFalse((root / ("Sprite" + "SheetCleaner.spec")).exists())
-        self.assertEqual((root / "VERSION").read_text(encoding="utf-8").strip(), "1.1.0")
+        self.assertEqual((root / "VERSION").read_text(encoding="utf-8").strip(), "1.1.1")
 
         spec = (root / "GameAssetKeyer.spec").read_text(encoding="utf-8")
         build = (root / "build_release.bat").read_text(encoding="utf-8")
@@ -38,7 +38,7 @@ class BrandingTests(unittest.TestCase):
         self.assertIn("GameAssetKeyer.exe", build)
         self.assertIn("GameAssetKeyer.exe", verify)
         self.assertIn("GameAssetKeyer.py", launcher)
-        self.assertIn("GameAssetKeyer-v1.1.0-Windows-x64.zip", (root / "README.md").read_text(encoding="utf-8"))
+        self.assertIn("GameAssetKeyer-v1.1.1-Windows-x64.zip", (root / "README.md").read_text(encoding="utf-8"))
 
         license_text = (root / "LICENSE").read_text(encoding="utf-8")
         source_text = (root / "SOURCE.txt").read_text(encoding="utf-8")
@@ -46,7 +46,7 @@ class BrandingTests(unittest.TestCase):
         self.assertTrue(license_text.startswith("Mozilla Public License Version 2.0"))
         self.assertNotIn("MIT License\n", license_text)
         self.assertIn("SPDX-License-Identifier: MPL-2.0", (root / "GameAssetKeyer.py").read_text(encoding="utf-8"))
-        self.assertIn("GameAssetKeyer/tree/v1.1.0", source_text)
+        self.assertIn("GameAssetKeyer/tree/v1.1.1", source_text)
         self.assertIn("Mozilla Public License 2.0 (MPL-2.0)", contributing)
         for required in ("LICENSE", "SOURCE.txt", "THIRD_PARTY_NOTICES.txt", "copy_third_party_licenses.py"):
             self.assertIn(required, build)

@@ -120,7 +120,7 @@ Post-processing results carry source signatures. If the Pipeline changes, old tr
 
 Windows users do not need Python or `pip`.
 
-1. Download `GameAssetKeyer-v1.1.0-Windows-x64.zip` from the [Releases](../../releases) page.
+1. Download `GameAssetKeyer-v1.1.1-Windows-x64.zip` from the [Releases](../../releases) page.
 2. Extract the entire archive to a normal writable folder.
 3. Run `GameAssetKeyer.exe`.
 

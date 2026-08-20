@@ -8,6 +8,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 from PIL import Image
@@ -17,6 +18,7 @@ from app.pipeline import (
     delete_stage,
     duplicate_stage,
     ensure_pipeline,
+    frame_stage_signature,
     make_stage,
     move_stage,
     process_pipeline_image,
@@ -25,6 +27,7 @@ from app.pipeline import (
     set_frame_params,
     clear_frame_params,
     set_stage_enabled,
+    stage_signature,
     update_stage,
 )
 
@@ -40,6 +43,15 @@ def sample_image() -> Image.Image:
 
 
 class PipelineTests(unittest.TestCase):
+    def test_processor_version_invalidates_stage_and_frame_cache_signatures(self) -> None:
+        stage = make_stage({"target_mode": "black"})
+        stage_cache = stage_signature(stage)
+        frame_cache = frame_stage_signature(stage, "frame_000001.png")
+
+        with patch("app.pipeline.PROCESSOR_CACHE_VERSION", 9999):
+            self.assertNotEqual(stage_signature(stage), stage_cache)
+            self.assertNotEqual(frame_stage_signature(stage, "frame_000001.png"), frame_cache)
+
     def test_one_two_three_stages_and_alpha_monotonicity(self) -> None:
         source = sample_image()
         stages = [

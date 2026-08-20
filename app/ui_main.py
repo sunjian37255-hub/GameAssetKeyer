@@ -26,7 +26,7 @@ from .animation_preview import (
     validate_fps,
 )
 from .branding import APP_NAME
-from .color_key_processor import DEFAULT_PARAMS, intensity_params
+from .color_key_processor import DEFAULT_PARAMS
 from .equal_grid_utils import normalize_equal_grid
 from .frame_sequence_exporter import export_png_frame_sequence
 from .final_result import (
@@ -695,10 +695,6 @@ class GameAssetKeyerApp:
 
     def on_intensity_change(self, _value: str | None = None) -> None:
         self.update_intensity_label()
-        if self.mode_key() == "black":
-            values = intensity_params("black", int(float(self.intensity_var.get())))
-            self.bg_threshold_var.set(round(values["low"], 3))
-            self.fg_threshold_var.set(round(values["high"], 3))
 
     def add_stage_ui(self) -> None:
         self.stop_animation()

@@ -310,6 +310,17 @@ class UiTests(unittest.TestCase):
         self.assertEqual(self.app.fg_threshold_var.get(), 0.71)
         self.assertNotIn("frame_000001.png", stage["frame_params"])
 
+    def test_black_intensity_change_preserves_unset_thresholds(self) -> None:
+        self.app.mode_var.set(self.app.t("mode.black"))
+        self.app.bg_threshold_var.set(0.0)
+        self.app.fg_threshold_var.set(0.0)
+        self.app.intensity_var.set(5)
+
+        self.app.on_intensity_change()
+
+        self.assertEqual(self.app.bg_threshold_var.get(), 0.0)
+        self.assertEqual(self.app.fg_threshold_var.get(), 0.0)
+
     def test_language_switch_preserves_project_stage_frame_and_params(self) -> None:
         project = self.app.pm.create_project(self.source, "language", 1, 1, "white")
         self.app.load_project(project["id"])
