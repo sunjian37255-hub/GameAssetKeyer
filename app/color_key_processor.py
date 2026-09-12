@@ -13,6 +13,9 @@ import cv2
 import numpy as np
 from PIL import Image, ImageFilter
 
+from .compute_backend import GPU, current_backend, cvt_color
+from .edge_color import remove_edge_color
+
 TARGETS = {
     "green": (0, 255, 0),
     "black": (0, 0, 0),
@@ -31,6 +34,10 @@ MODE_LABELS = {
 }
 
 DEFAULT_PARAMS: dict[str, Any] = {
+    "operation": "key",
+    "despill_strength": 0.8,
+    "despill_width": 3,
+    "despill_tolerance": 0.35,
     "target_mode": "black",
     "custom_color": "#000000",
     "intensity": 3,
@@ -86,7 +93,7 @@ def smoothstep(edge0: float, edge1: float, x: np.ndarray) -> np.ndarray:
 
 def rgb_to_hsv_np(rgb: np.ndarray) -> np.ndarray:
     bgr = rgb[..., ::-1].astype(np.float32)
-    hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
+    hsv = cvt_color(bgr, cv2.COLOR_BGR2HSV)
     hsv[..., 0] = hsv[..., 0] / 179.0
     hsv[..., 1] = hsv[..., 1] / 255.0
     hsv[..., 2] = hsv[..., 2] / 255.0
@@ -106,6 +113,99 @@ def remove_small_transparent_holes(alpha: np.ndarray, min_area: int) -> np.ndarr
     return result
 
 
+def _umat_clamp(value: cv2.UMat, low: float = 0.0, high: float = 1.0) -> cv2.UMat:
+    return cv2.min(cv2.max(value, low), high)
+
+
+def _umat_smoothstep(edge0: float, edge1: float, value: cv2.UMat) -> cv2.UMat:
+    denom = max(edge1 - edge0, 1e-6)
+    t = _umat_clamp(cv2.multiply(cv2.subtract(value, edge0), 1.0 / denom))
+    return cv2.multiply(cv2.multiply(t, t), cv2.add(cv2.multiply(t, -2.0), 3.0))
+
+
+def _umat_rgb_distance(channels: tuple[cv2.UMat, cv2.UMat, cv2.UMat], target: np.ndarray) -> cv2.UMat:
+    squared = []
+    for channel, target_value in zip(channels, target, strict=True):
+        delta = cv2.subtract(channel, float(target_value))
+        squared.append(cv2.multiply(delta, delta))
+    total = cv2.add(cv2.add(squared[0], squared[1]), squared[2])
+    return cv2.multiply(cv2.sqrt(total), 1.0 / math.sqrt(3.0))
+
+
+def _process_rule_image_opencl(
+    image: Image.Image,
+    cfg: dict[str, Any],
+    mode: str,
+    target: np.ndarray,
+    level: int,
+    ip: dict[str, float],
+    strength_scale: float,
+    apply_hole_punch: bool,
+) -> Image.Image:
+    """Run the continuous color/alpha math on OpenCL without CPU round trips."""
+    rgba = np.array(image.convert("RGBA"), dtype=np.float32) / 255.0
+    red, green, blue, original_alpha = cv2.split(cv2.UMat(rgba))
+    rgb_channels = (red, green, blue)
+    hsv = cv2.cvtColor(cv2.merge((blue, green, red)), cv2.COLOR_BGR2HSV)
+    hue, sat, val = cv2.split(hsv)
+    hue = cv2.multiply(hue, 1.0 / 179.0)
+    sat = cv2.multiply(sat, 1.0 / 255.0)
+    val = cv2.multiply(val, 1.0 / 255.0)
+
+    if mode == "black":
+        color_distance = _umat_clamp(cv2.multiply(_umat_rgb_distance(rgb_channels, target), 1.0 / strength_scale))
+        low = float(cfg.get("background_threshold", ip["low"]))
+        high = float(cfg.get("foreground_threshold", ip["high"]))
+        alpha = _umat_smoothstep(low, high, color_distance)
+        if cfg.get("keep_sparks", True):
+            fire_hue = cv2.bitwise_or(cv2.compare(hue, 0.13, cv2.CMP_LT), cv2.compare(hue, 0.94, cv2.CMP_GT))
+            spark = cv2.bitwise_and(fire_hue, cv2.compare(sat, float(cfg.get("saturation_protect", 0.35)), cv2.CMP_GE))
+            spark = cv2.bitwise_and(spark, cv2.compare(val, 0.08, cv2.CMP_GT))
+            raised = cv2.max(alpha, 0.28 + 0.12 * (level - 1) / 4.0)
+            alpha = cv2.copyTo(raised, spark, alpha)
+    else:
+        rgb_dist = _umat_rgb_distance(rgb_channels, target)
+        target_hsv = cv2.cvtColor(target.reshape((1, 1, 3))[..., ::-1].astype(np.float32), cv2.COLOR_BGR2HSV)[0, 0]
+        target_hue = float(target_hsv[0] / 179.0)
+        target_sat = float(target_hsv[1] / 255.0)
+        target_val = float(target_hsv[2] / 255.0)
+        hue_dist = cv2.absdiff(hue, target_hue)
+        hue_dist = cv2.multiply(cv2.min(hue_dist, cv2.add(cv2.multiply(hue_dist, -1.0), 1.0)), 2.0)
+        sat_miss = cv2.max(cv2.add(cv2.multiply(sat, -1.0), target_sat), 0.0)
+        val_dist = cv2.absdiff(val, target_val)
+        key_distance = cv2.max(rgb_dist, cv2.multiply(hue_dist, 0.55))
+        if target_sat > 0.35:
+            key_distance = cv2.max(key_distance, cv2.multiply(sat_miss, 0.45))
+        key_distance = cv2.max(key_distance, cv2.multiply(val_dist, 0.35))
+        key_distance = _umat_clamp(cv2.multiply(key_distance, 1.0 / strength_scale))
+        low = clamp(float(cfg.get("background_threshold", 0.40)), 0.0, 1.0)
+        high = clamp(float(cfg.get("foreground_threshold", 0.76)), 0.0, 1.0)
+        if high <= low:
+            high = min(1.0, low + 0.01)
+        alpha = _umat_clamp(_umat_smoothstep(low, high, key_distance))
+
+    gamma = max(float(cfg.get("alpha_gamma", 1.0)), 0.1)
+    alpha = cv2.pow(_umat_clamp(alpha), gamma)
+    alpha = cv2.multiply(cv2.multiply(alpha, original_alpha), float(cfg.get("output_alpha", 1.0)))
+
+    edge_erode = int(float(cfg.get("edge_erode", 0)))
+    if edge_erode > 0:
+        kernel = np.ones((edge_erode * 2 + 1, edge_erode * 2 + 1), np.uint8)
+        alpha = cv2.erode(alpha, kernel, iterations=1)
+    alpha8 = np.clip(alpha.get() * 255.0, 0, 255).astype(np.uint8)
+
+    feather = float(cfg.get("feather_radius", 0))
+    if feather > 0:
+        alpha_img = Image.fromarray(alpha8, "L").filter(ImageFilter.GaussianBlur(radius=feather))
+        alpha8 = np.array(alpha_img, dtype=np.uint8)
+    if apply_hole_punch and cfg.get("enable_hole_punch", True):
+        alpha8 = remove_small_transparent_holes(alpha8, int(float(cfg.get("min_hole_size", 0))))
+
+    out = np.array(image.convert("RGBA"), dtype=np.uint8)
+    out[..., 3] = alpha8
+    return Image.fromarray(out, "RGBA")
+
+
 def _process_rule_image(image: Image.Image, params: dict[str, Any], apply_hole_punch: bool = True) -> Image.Image:
     cfg = DEFAULT_PARAMS.copy()
     cfg.update(params or {})
@@ -117,6 +217,9 @@ def _process_rule_image(image: Image.Image, params: dict[str, Any], apply_hole_p
     level = int(cfg.get("intensity", 3))
     ip = intensity_params(mode, level)
     strength_scale = {1: 0.72, 2: 0.86, 3: 1.0, 4: 1.18, 5: 1.38}.get(level, 1.0)
+
+    if current_backend() == GPU:
+        return _process_rule_image_opencl(image, cfg, mode, target, level, ip, strength_scale, apply_hole_punch)
 
     rgba = np.array(image.convert("RGBA"), dtype=np.float32) / 255.0
     rgb = rgba[..., :3]
@@ -187,6 +290,13 @@ def _process_rule_image(image: Image.Image, params: dict[str, Any], apply_hole_p
 
 
 def process_image(image: Image.Image, params: dict[str, Any], apply_hole_punch: bool = True) -> Image.Image:
+    if params.get("operation") == "despill":
+        return remove_edge_color(
+            image, parse_color(params.get("target_mode", "green"), params.get("custom_color", "#00FF00")),
+            strength=float(params.get("despill_strength", 0.8)),
+            width=int(float(params.get("despill_width", 3))),
+            tolerance=float(params.get("despill_tolerance", 0.35)),
+        )
     return _process_rule_image(image, params, apply_hole_punch=apply_hole_punch)
 
 

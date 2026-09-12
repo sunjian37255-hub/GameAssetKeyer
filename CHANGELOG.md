@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.2.0] - 2026-09-13
+
+### Added
+
+- Independent Remove Color Fringe Pipeline stages that correct selected chromatic edge spill while preserving Alpha and the silhouette.
+- A 5× pixel loupe for the dual-preview eyedropper, with an exact center-pixel marker and checkerboard transparency display.
+- A source-only CPU / GPU (OpenCL) selector with persistent preferences and backend-aware Pipeline cache signatures.
+- A standalone video time-range extractor that exports ordered frames and opens the actual output folder.
+
+### Improved
+
+- OpenCL processing keeps compatible color-distance, HSV, threshold, and Alpha operations on the GPU, improving repeated full-HD frame throughput on supported hardware.
+- The source launcher now resolves the pinned local Python installation reliably without depending on the Windows Store alias or `PATH`.
+- Frozen Windows releases explicitly remain CPU-only for cross-machine portability.
+
 ## [1.1.1] - 2026-08-21
 
 ### Fixed

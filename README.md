@@ -31,9 +31,12 @@ Background removal is often only one step in preparing game-ready animation asse
 - Single PNG processing
 - Sprite Sheet splitting, processing, and rebuilding
 - Video frame extraction and ordered RGBA PNG frame-sequence export
+- Standalone time-range video frame extraction with automatic output-folder opening
 - Black, white, green, and magenta presets
 - Custom RGB chroma key and eyedropper
+- 5× pixel loupe with an exact center marker for dual-preview eyedropper sampling
 - Unlimited multi-pass stages with per-stage parameters
+- Independent **Remove color fringe** stages after keying: choose/sample a chromatic target color and adjust strength, edge width and similar-color range. Only edge RGB is corrected; alpha and fine hair coverage are preserved. Black/white/gray targets are not supported. Existing keying stages retain their behavior.
 - Per-frame parameter overrides
 - Background batch processing with progress and cancellation
 - Non-destructive disk-backed Pipeline and cache invalidation
@@ -49,6 +52,7 @@ Background removal is often only one step in preparing game-ready animation asse
 - Transparent cell padding
 - English and Simplified Chinese application UI
 - Fully offline processing with no AI runtime and no file uploads
+- Source mode can switch between CPU and OpenCL GPU processing on the home page
 
 ## Before and After
 
@@ -120,7 +124,7 @@ Post-processing results carry source signatures. If the Pipeline changes, old tr
 
 Windows users do not need Python or `pip`.
 
-1. Download `GameAssetKeyer-v1.1.1-Windows-x64.zip` from the [Releases](../../releases) page.
+1. Download `GameAssetKeyer-v1.2.0-Windows-x64.zip` from the [Releases](../../releases) page.
 2. Extract the entire archive to a normal writable folder.
 3. Run `GameAssetKeyer.exe`.
 
@@ -131,6 +135,8 @@ The Windows executable is currently unsigned, so Windows SmartScreen may display
 ## Run from Source
 
 Runtime dependencies support Python 3.11 or later. Python 3.13 is used by source CI; the official Windows build uses the separately pinned environment below. A Python installation with Tkinter/Tcl/Tk is required.
+
+Source runs expose a CPU / GPU (OpenCL) selector on the home page. GPU mode accelerates compatible color and Alpha operations when OpenCV detects an OpenCL device; unsupported steps remain on the CPU. The portable Windows release is intentionally locked to CPU for predictable cross-machine compatibility.
 
 ```bat
 python -m venv .venv

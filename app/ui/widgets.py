@@ -42,15 +42,22 @@ class ScrollableFrame(ttk.Frame):
 
 
 class ImageCanvas(tk.Canvas):
+    LOUPE_ZOOM = 5
+    LOUPE_SAMPLE_SIZE = 21
+    LOUPE_TAG = "eyedropper_loupe"
+
     def __init__(self, parent, **kwargs):
         super().__init__(parent, background=BG_ROOT, highlightthickness=0, **kwargs)
         self.source_image: Image.Image | None = None
         self._photo: ImageTk.PhotoImage | None = None
+        self._loupe_photo: ImageTk.PhotoImage | None = None
         self.display_box = (0, 0, 0, 0)
         self.eyedropper_callback: Callable[[tuple[int, int, int] | None], None] | None = None
         self.eyedropper_miss_callback: Callable[[], None] | None = None
         self.bind("<Configure>", lambda _event: self.redraw())
         self.bind("<Button-1>", self._on_click)
+        self.bind("<Motion>", self._on_motion)
+        self.bind("<Leave>", self._hide_loupe)
 
     def set_image(self, image: Image.Image | None) -> None:
         self.source_image = image.convert("RGBA") if image is not None else None
@@ -69,6 +76,7 @@ class ImageCanvas(tk.Canvas):
         self.eyedropper_callback = None
         self.eyedropper_miss_callback = None
         self.configure(cursor="")
+        self._hide_loupe()
 
     def canvas_to_image(self, x: int, y: int) -> tuple[int, int] | None:
         if self.source_image is None:
@@ -98,6 +106,73 @@ class ImageCanvas(tk.Canvas):
         self.cancel_eyedropper()
         callback(None if pixel[3] == 0 else pixel[:3])
 
+    def _on_motion(self, event) -> None:
+        if self.eyedropper_callback is None:
+            return
+        point = self.canvas_to_image(event.x, event.y)
+        if point is None:
+            self._hide_loupe()
+            return
+        self._draw_loupe(event.x, event.y, point)
+
+    def _draw_loupe(self, mouse_x: int, mouse_y: int, point: tuple[int, int]) -> None:
+        if self.source_image is None:
+            self._hide_loupe()
+            return
+        sample_size = self.LOUPE_SAMPLE_SIZE
+        radius = sample_size // 2
+        image_x, image_y = point
+        sample = Image.new("RGBA", (sample_size, sample_size), (0, 0, 0, 0))
+        source_left = max(0, image_x - radius)
+        source_top = max(0, image_y - radius)
+        source_right = min(self.source_image.width, image_x + radius + 1)
+        source_bottom = min(self.source_image.height, image_y + radius + 1)
+        region = self.source_image.crop((source_left, source_top, source_right, source_bottom))
+        sample.alpha_composite(region, (source_left - image_x + radius, source_top - image_y + radius))
+
+        checker = Image.new("RGBA", sample.size, CHECKER_DARK)
+        checker_size = 2
+        for y in range(0, sample_size, checker_size):
+            for x in range(0, sample_size, checker_size):
+                if (x // checker_size + y // checker_size) % 2:
+                    checker.paste(CHECKER_LIGHT, (x, y, min(x + checker_size, sample_size), min(y + checker_size, sample_size)))
+        checker.alpha_composite(sample)
+
+        loupe_size = sample_size * self.LOUPE_ZOOM
+        enlarged = checker.resize((loupe_size, loupe_size), Image.Resampling.NEAREST)
+        self._loupe_photo = ImageTk.PhotoImage(enlarged)
+        canvas_width = max(1, self.winfo_width())
+        canvas_height = max(1, self.winfo_height())
+        gap = 16
+        left = mouse_x + gap
+        top = mouse_y + gap
+        if left + loupe_size + 3 > canvas_width:
+            left = mouse_x - loupe_size - gap
+        if top + loupe_size + 3 > canvas_height:
+            top = mouse_y - loupe_size - gap
+        left = max(2, min(left, max(2, canvas_width - loupe_size - 3)))
+        top = max(2, min(top, max(2, canvas_height - loupe_size - 3)))
+
+        self.delete(self.LOUPE_TAG)
+        tags = (self.LOUPE_TAG,)
+        self.create_image(left, top, image=self._loupe_photo, anchor="nw", tags=tags)
+        self.create_rectangle(left, top, left + loupe_size, top + loupe_size, outline="#FFFFFF", width=3, tags=tags)
+        center = radius * self.LOUPE_ZOOM
+        self.create_rectangle(
+            left + center,
+            top + center,
+            left + center + self.LOUPE_ZOOM,
+            top + center + self.LOUPE_ZOOM,
+            outline="#FF3B30",
+            width=2,
+            tags=tags,
+        )
+        self.create_text(left + loupe_size - 6, top + 6, text="5×", fill="#FFFFFF", anchor="ne", tags=tags)
+
+    def _hide_loupe(self, _event=None) -> None:
+        self.delete(self.LOUPE_TAG)
+        self._loupe_photo = None
+
     def _draw_checkerboard(self, left: int, top: int, width: int, height: int, size: int = 12) -> None:
         colors = (CHECKER_DARK, CHECKER_LIGHT)
         for y in range(top, top + height, size):
@@ -107,6 +182,7 @@ class ImageCanvas(tk.Canvas):
 
     def redraw(self) -> None:
         self.delete("all")
+        self._loupe_photo = None
         if self.source_image is None:
             self.display_box = (0, 0, 0, 0)
             return

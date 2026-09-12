@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 
 from app.branding import APP_NAME
+from app.compute_backend import current_backend, initialize_backend
 from app.ui_main import GameAssetKeyerApp
 
 
@@ -60,6 +61,7 @@ def run_import_check() -> int:
     print(f"Pillow={PIL.__version__}")
     print(f"NumPy={numpy.__version__}")
     print(f"OpenCV={cv2.__version__}")
+    print(f"Compute backend={current_backend().upper()}")
     print(f"i18n_keys={len(zh_keys)}")
     return 0
 
@@ -135,6 +137,7 @@ def main() -> int:
     parser.add_argument("--self-test-image", default="", help="Run deterministic smoke test with a 3x3 PNG image")
     parser.add_argument("--self-test-output", default="", help="Write self-test JSON to this path")
     args = parser.parse_args()
+    initialize_backend(get_app_root())
     if args.check:
         return run_import_check()
     if args.self_test_image:

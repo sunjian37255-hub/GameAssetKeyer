@@ -19,6 +19,7 @@ import numpy as np
 from PIL import Image
 
 from .color_key_processor import DEFAULT_PARAMS, PROCESSOR_CACHE_VERSION, process_image
+from .compute_backend import current_backend
 
 PIPELINE_VERSION = 1
 ProgressCallback = Callable[[int, int, int, int], None]
@@ -34,6 +35,10 @@ def normalize_params(params: dict[str, Any] | None = None) -> dict[str, Any]:
         result.update({key: value for key, value in params.items() if key in DEFAULT_PARAMS})
     if result["target_mode"] not in {"black", "white", "green", "magenta", "custom"}:
         result["target_mode"] = "black"
+    if result.get("operation") != "despill":
+        # Keep legacy key-stage cache signatures stable when opening old projects.
+        for key in ("operation", "despill_strength", "despill_width", "despill_tolerance"):
+            result.pop(key, None)
     return result
 
 
@@ -109,6 +114,7 @@ def ensure_pipeline(project: dict[str, Any]) -> dict[str, Any]:
 def stage_signature(stage: dict[str, Any]) -> str:
     payload = {
         "processor_cache_version": PROCESSOR_CACHE_VERSION,
+        "compute_backend": current_backend(),
         "enabled": bool(stage["enabled"]),
         "params": normalize_params(stage["params"]),
         "frame_params": {
@@ -128,6 +134,7 @@ def effective_stage_params(stage: dict[str, Any], frame_name: str | None = None)
 def frame_stage_signature(stage: dict[str, Any], frame_name: str) -> str:
     payload = {
         "processor_cache_version": PROCESSOR_CACHE_VERSION,
+        "compute_backend": current_backend(),
         "enabled": bool(stage["enabled"]),
         "params": effective_stage_params(stage, frame_name),
     }

@@ -27,6 +27,17 @@ from .animation_preview import (
 )
 from .branding import APP_NAME
 from .color_key_processor import DEFAULT_PARAMS
+from .compute_backend import (
+    CPU,
+    GPU,
+    configure_backend,
+    current_backend,
+    gpu_available,
+    initialize_backend,
+    is_frozen_build,
+    opencl_device_name,
+    save_backend_preference,
+)
 from .equal_grid_utils import normalize_equal_grid
 from .frame_sequence_exporter import export_png_frame_sequence
 from .final_result import (
@@ -56,6 +67,7 @@ from .ui.create_project_dialog import CreateProjectDialog
 from .ui.equal_grid_dialog import EqualGridDialog
 from .ui.frame_sequence_composer_dialog import FrameSequenceComposerDialog
 from .ui.project_name_dialog import ProjectNameDialog
+from .ui.video_frame_extractor_dialog import VideoFrameExtractorDialog
 from .ui.theme import (
     ACCENT,
     ACCENT_HOVER,
@@ -81,6 +93,7 @@ class GameAssetKeyerApp:
     def __init__(self, app_root: Path):
         self.app_root = app_root
         self.i18n = I18n(app_root)
+        self.compute_backend = initialize_backend(app_root)
         self.pm = ProjectManager(app_root)
         self.presets_dir = app_root / "presets"
         ensure_default_presets(self.presets_dir)
@@ -147,6 +160,10 @@ class GameAssetKeyerApp:
         self.frame_override_var = tk.StringVar(value="")
         self.mode_var = tk.StringVar(value=self.t("mode.black"))
         self.custom_color_var = tk.StringVar(value="#000000")
+        self.operation_var = tk.StringVar(value="key")
+        self.despill_strength_var = tk.DoubleVar(value=0.8)
+        self.despill_width_var = tk.IntVar(value=3)
+        self.despill_tolerance_var = tk.DoubleVar(value=0.35)
         self.intensity_var = tk.IntVar(value=3)
         self.intensity_label_var = tk.StringVar(value=self.t("intensity.black.3"))
         self.bg_threshold_var = tk.DoubleVar(value=0.40)
@@ -162,6 +179,7 @@ class GameAssetKeyerApp:
         self.left_view_var = tk.StringVar(value="input")
         self.right_view_var = tk.StringVar(value="result")
         self.animation_fps_var = tk.StringVar(value="12")
+        self.compute_backend_var = tk.StringVar(value="")
         self._create_dialog: CreateProjectDialog | None = None
 
     def _build_shell(self) -> None:
@@ -229,7 +247,27 @@ class GameAssetKeyerApp:
         home = ttk.Frame(self.page, padding=28, style="Panel.TFrame")
         home.pack(fill="both", expand=True)
         ttk.Label(home, text=self.t("home.title"), style="Title.TLabel").pack(anchor="w")
-        ttk.Label(home, text=self.t("home.subtitle"), style="Muted.TLabel").pack(anchor="w", pady=(4, 22))
+        ttk.Label(home, text=self.t("home.subtitle"), style="Muted.TLabel").pack(anchor="w", pady=(4, 10))
+        backend_bar = ttk.Frame(home, style="Panel.TFrame")
+        backend_bar.pack(fill="x", pady=(0, 18))
+        ttk.Label(backend_bar, text=self.t("compute.label"), style="Section.TLabel").pack(side="left")
+        if is_frozen_build():
+            ttk.Label(backend_bar, text=self.t("compute.cpu_locked"), style="Muted.TLabel").pack(side="left", padx=(8, 0))
+        else:
+            labels = [self.t("compute.cpu"), self.t("compute.gpu")]
+            self.compute_backend_var.set(self.t(f"compute.{current_backend()}"))
+            self.compute_backend_combo = ttk.Combobox(
+                backend_bar,
+                textvariable=self.compute_backend_var,
+                values=labels,
+                state="readonly",
+                width=18,
+            )
+            self.compute_backend_combo.pack(side="left", padx=(8, 10))
+            self.compute_backend_combo.bind("<<ComboboxSelected>>", self.on_compute_backend_change)
+            detail_key = "compute.gpu_available" if gpu_available() else "compute.gpu_unavailable"
+            device = opencl_device_name() or "OpenCL"
+            ttk.Label(backend_bar, text=self.t(detail_key, device=device), style="Muted.TLabel").pack(side="left")
         launch = ttk.Frame(home, style="Panel.TFrame")
         launch.pack(fill="x")
         for title, subtitle, command in [
@@ -246,12 +284,14 @@ class GameAssetKeyerApp:
         standalone.pack(fill="x", pady=(18, 0))
         standalone.columnconfigure(0, weight=1, uniform="standalone")
         standalone.columnconfigure(1, weight=1, uniform="standalone")
+        standalone.columnconfigure(2, weight=1, uniform="standalone")
         for column, title_key, subtitle_key, command in (
             (0, "tools.equal_grid", "home.equal_grid_subtitle", self.run_equal_grid),
             (1, "tools.sequence_composer", "home.sequence_composer_subtitle", self.run_sequence_composer),
+            (2, "tools.video_frame_extractor", "home.video_extractor_subtitle", self.run_video_frame_extractor),
         ):
             card = ttk.Frame(standalone, padding=12, style="Card.TFrame")
-            card.grid(row=0, column=column, sticky="nsew", padx=(0, 6) if column == 0 else (6, 0))
+            card.grid(row=0, column=column, sticky="nsew", padx=(0, 6) if column == 0 else ((6, 0) if column == 2 else 6))
             card.columnconfigure(0, weight=1)
             ttk.Label(card, text=self.t(title_key), style="Section.TLabel").grid(row=0, column=0, sticky="w")
             ttk.Label(card, text=self.t(subtitle_key), style="Muted.TLabel", wraplength=360).grid(row=1, column=0, sticky="w", pady=(4, 12))
@@ -282,6 +322,24 @@ class GameAssetKeyerApp:
         for project in self.pm.list_projects():
             project_type = self.t(f"type.{project['project_type']}")
             self.recent_tree.insert("", "end", iid=project["id"], text=project["name"], values=(project_type, project.get("frame_count", project.get("rows", 0) * project.get("cols", 0))))
+
+    def on_compute_backend_change(self, _event=None) -> None:
+        if is_frozen_build():
+            self.compute_backend = configure_backend(CPU)
+            return
+        requested = GPU if self.compute_backend_var.get() == self.t("compute.gpu") else CPU
+        if self.worker is not None and self.worker.is_alive():
+            self.compute_backend_var.set(self.t(f"compute.{current_backend()}"))
+            self.status_var.set(self.t("status.compute_busy"))
+            return
+        selected = configure_backend(requested)
+        self.compute_backend = selected
+        self.compute_backend_var.set(self.t(f"compute.{selected}"))
+        save_backend_preference(self.app_root, selected)
+        if requested == GPU and selected != GPU:
+            self.status_var.set(self.t("status.compute_unavailable"))
+        else:
+            self.status_var.set(self.t("status.compute_changed", backend=self.t(f"compute.{selected}")))
 
     def create_image_project(self) -> None:
         self._show_create_dialog("image")
@@ -488,6 +546,7 @@ class GameAssetKeyerApp:
         stage_actions.pack(fill="x", pady=6)
         for text, command in [("+", self.add_stage_ui), (self.t("action.duplicate"), self.duplicate_stage_ui), (self.t("action.delete"), self.delete_stage_ui), ("↑", lambda: self.move_stage_ui(-1)), ("↓", lambda: self.move_stage_ui(1))]:
             ttk.Button(stage_actions, text=text, command=command).pack(side="left", padx=(0, 3))
+        ttk.Button(self.pipeline_scroll.content, text=self.t("despill.add"), command=self.add_despill_stage_ui).pack(fill="x", pady=(4, 0))
         self._build_stage_editor(self.pipeline_scroll.content)
 
     def _build_stage_editor(self, parent: ttk.Frame) -> None:
@@ -531,6 +590,28 @@ class GameAssetKeyerApp:
         preset_row.grid(row=19, column=0, columnspan=2, sticky="ew", pady=(8, 0))
         ttk.Button(preset_row, text=self.t("preset.load"), command=self.load_preset_ui).pack(side="left", fill="x", expand=True)
         ttk.Button(preset_row, text=self.t("preset.save"), command=self.save_preset_ui).pack(side="left", fill="x", expand=True, padx=(4, 0))
+        self._key_editor_widgets = [widget for widget in editor.winfo_children()
+                                    if 3 <= int(widget.grid_info().get("row", -1)) <= 10]
+        self.despill_editor = ttk.Frame(editor)
+        self._spin(self.despill_editor, self.t("despill.strength"), self.despill_strength_var, 0, 1, 0.05, 0)
+        self._spin(self.despill_editor, self.t("despill.width"), self.despill_width_var, 1, 32, 1, 1)
+        self._spin(self.despill_editor, self.t("despill.tolerance"), self.despill_tolerance_var, 0.01, 1, 0.05, 2)
+        ttk.Label(self.despill_editor, text=self.t("despill.hint"), wraplength=270, style="Muted.TLabel").grid(row=3, column=0, columnspan=2, sticky="ew", pady=6)
+        self.refresh_operation_editor()
+
+    def refresh_operation_editor(self) -> None:
+        if not hasattr(self, "despill_editor") or not self.despill_editor.winfo_exists():
+            return
+        despill = self.operation_var.get() == "despill"
+        for widget in self._key_editor_widgets:
+            widget.grid_remove() if despill else widget.grid()
+        if despill:
+            self.advanced_frame.grid_remove()
+            self.despill_editor.grid(row=3, column=0, columnspan=2, sticky="ew")
+        else:
+            self.despill_editor.grid_remove()
+            if self.advanced_visible:
+                self.advanced_frame.grid(row=11, column=0, columnspan=2, sticky="ew")
 
     def _spin(self, parent, label: str, variable, low, high, increment, row: int) -> None:
         ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", pady=(5, 0))
@@ -616,6 +697,8 @@ class GameAssetKeyerApp:
             ttk.Checkbutton(row, variable=enabled, command=lambda i=index, var=enabled: self.toggle_stage_ui(i, var.get())).pack(side="left")
             mode_key = stage["params"]["target_mode"]
             mode = self.mode_labels().get(mode_key, self.t("mode.custom"))
+            if stage["params"].get("operation") == "despill":
+                mode = self.t("despill.name") + " · " + mode
             custom = stage["params"]["custom_color"] if mode_key == "custom" else ""
             status = self.t(f"stage.{stage['status']}")
             text = f"{self.t('stage.label', number=index + 1)} · {mode} {custom} · {status}"
@@ -642,6 +725,10 @@ class GameAssetKeyerApp:
 
     def collect_params(self) -> dict:
         return {
+            "operation": self.operation_var.get(),
+            "despill_strength": float(self.despill_strength_var.get()),
+            "despill_width": int(float(self.despill_width_var.get())),
+            "despill_tolerance": float(self.despill_tolerance_var.get()),
             "target_mode": self.mode_key(),
             "custom_color": self.custom_color_var.get(),
             "intensity": int(float(self.intensity_var.get())),
@@ -660,6 +747,11 @@ class GameAssetKeyerApp:
     def apply_params(self, params: dict) -> None:
         config = DEFAULT_PARAMS.copy()
         config.update(params)
+        self.operation_var.set(config["operation"])
+        self.despill_strength_var.set(float(config["despill_strength"]))
+        self.despill_width_var.set(int(config["despill_width"]))
+        self.despill_tolerance_var.set(float(config["despill_tolerance"]))
+        self.refresh_operation_editor()
         self.mode_var.set(self.mode_labels().get(config["target_mode"], self.t("mode.black")))
         self.custom_color_var.set(config["custom_color"])
         self.intensity_var.set(int(config["intensity"]))
@@ -696,9 +788,16 @@ class GameAssetKeyerApp:
     def on_intensity_change(self, _value: str | None = None) -> None:
         self.update_intensity_label()
 
-    def add_stage_ui(self) -> None:
+    def add_despill_stage_ui(self) -> None:
+        self.add_stage_ui("despill")
+
+    def add_stage_ui(self, operation: str = "key") -> None:
         self.stop_animation()
-        self.selected_stage_index = add_stage(self.current_project, self.collect_params())
+        params = self.collect_params()
+        params["operation"] = operation
+        if operation == "despill" and params["target_mode"] in {"black", "white"}:
+            params.update(target_mode="green", custom_color="#00FF00")
+        self.selected_stage_index = add_stage(self.current_project, params)
         self.pm.save_project(self.current_project_id, self.current_project)
         self.refresh_stage_list()
         self.select_stage(self.selected_stage_index)
@@ -1044,6 +1143,10 @@ class GameAssetKeyerApp:
         # belongs to the workbench and must not survive a page transition.
         self.stop_animation()
         FrameSequenceComposerDialog(self.root, self.t).show()
+
+    def run_video_frame_extractor(self) -> None:
+        self.stop_animation()
+        VideoFrameExtractorDialog(self.root, self.t).show()
 
     def run_equal_grid(self) -> None:
         self.stop_animation()

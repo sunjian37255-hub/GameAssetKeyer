@@ -18,6 +18,7 @@ from PIL import Image
 from app.pipeline import ensure_pipeline
 from app.final_result import FinalResultSource
 from app.ui_main import GameAssetKeyerApp
+from app.compute_backend import CPU, GPU, configure_backend, current_backend, gpu_available
 
 
 class UiTests(unittest.TestCase):
@@ -36,6 +37,7 @@ class UiTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.app.root.destroy()
+        configure_backend(CPU)
         self.temp.cleanup()
 
     def test_home_and_workbench_stage_actions(self) -> None:
@@ -58,6 +60,20 @@ class UiTests(unittest.TestCase):
         self.app.move_stage_ui(-1)
         self.app.delete_stage_ui()
         self.assertEqual(len(stages), 2)
+
+    def test_source_home_can_select_cpu_or_opencl_gpu(self) -> None:
+        self.assertEqual(tuple(self.app.compute_backend_combo.cget("values")), ("CPU", "GPU（OpenCL）"))
+        self.app.compute_backend_var.set("CPU")
+        self.app.on_compute_backend_change()
+        self.assertEqual(current_backend(), CPU)
+        settings = json.loads((self.app_root / "settings.json").read_text(encoding="utf-8"))
+        self.assertEqual(settings["compute_backend"], CPU)
+        if gpu_available():
+            self.app.compute_backend_var.set("GPU（OpenCL）")
+            self.app.on_compute_backend_change()
+            self.assertEqual(current_backend(), GPU)
+            settings = json.loads((self.app_root / "settings.json").read_text(encoding="utf-8"))
+            self.assertEqual(settings["compute_backend"], GPU)
 
     def test_recent_project_context_menu_keeps_double_click_and_has_three_actions(self) -> None:
         project = self.app.pm.create_project(self.source, "recent-menu", 1, 1, "white")
@@ -189,6 +205,28 @@ class UiTests(unittest.TestCase):
         self.app.start_eyedropper()
         self.assertEqual(self.app.cancel_eyedropper(SimpleNamespace()), "break")
         self.assertFalse(self.app._eyedropper_active)
+
+    def test_eyedropper_shows_five_times_loupe_on_both_previews(self) -> None:
+        project = self.app.pm.create_project(self.source, "eyedropper-loupe", 1, 1, "white")
+        self.app.load_project(project["id"])
+        self.app.root.update_idletasks()
+        for canvas in (self.app.left_preview_canvas, self.app.right_preview_canvas):
+            canvas.set_image(Image.new("RGBA", (40, 40), (12, 34, 56, 255)))
+            canvas.display_box = (10, 10, 210, 210)
+
+        self.app.start_eyedropper()
+        for canvas in (self.app.left_preview_canvas, self.app.right_preview_canvas):
+            canvas._on_motion(SimpleNamespace(x=110, y=110))
+            self.assertEqual(canvas.LOUPE_ZOOM, 5)
+            self.assertIsNotNone(canvas._loupe_photo)
+            self.assertEqual(len(canvas.find_withtag(canvas.LOUPE_TAG)), 4)
+
+        self.app.left_preview_canvas._on_motion(SimpleNamespace(x=5, y=5))
+        self.assertIsNone(self.app.left_preview_canvas._loupe_photo)
+        self.assertFalse(self.app.left_preview_canvas.find_withtag(self.app.left_preview_canvas.LOUPE_TAG))
+        self.app.cancel_eyedropper(update_status=False)
+        self.assertIsNone(self.app.right_preview_canvas._loupe_photo)
+        self.assertFalse(self.app.right_preview_canvas.find_withtag(self.app.right_preview_canvas.LOUPE_TAG))
 
     def test_dual_preview_defaults_and_stage_refresh(self) -> None:
         project = self.app.pm.create_project(self.source, "dual-preview", 1, 1, "white")
