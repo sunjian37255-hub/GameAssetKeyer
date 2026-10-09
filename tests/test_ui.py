@@ -270,6 +270,9 @@ class UiTests(unittest.TestCase):
 
     def test_compact_frame_rail_and_equal_previews_at_narrow_sizes(self) -> None:
         self.app.root.tk.call("tk", "scaling", 1.6666667)
+        # CI's virtual desktop can be narrower than the requested test viewport.
+        # Override Tk's screen-derived maximum, then verify the actual geometry.
+        self.app.root.maxsize(1800, 1200)
         project = self.app.pm.create_project(self.source, "very-long-project-name-" * 8, 1, 1, "white")
         self.app.load_project(project["id"])
         self.app.root.deiconify()
@@ -280,6 +283,7 @@ class UiTests(unittest.TestCase):
                 with self.subTest(locale=locale, width=width):
                     self.app.root.geometry(f"{width}x820+0+0")
                     self.app.root.update()
+                    self.assertEqual(self.app.root.winfo_width(), width)
                     left = self.app.left_preview_canvas
                     right = self.app.right_preview_canvas
                     rail = self.app.frame_listbox.master.master
