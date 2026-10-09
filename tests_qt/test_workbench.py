@@ -51,7 +51,8 @@ class WorkbenchTests(unittest.TestCase):
     def setUp(self):
         temp_root = "I:/CodexSafeCheck" if Path("I:/CodexSafeCheck").is_dir() else None
         self.temp = tempfile.TemporaryDirectory(prefix="gak-qt-test-", dir=temp_root)
-        self.root = Path(self.temp.name)
+        # Windows runners may return an 8.3 alias (RUNNER~1) for the temp root.
+        self.root = Path(self.temp.name).resolve()
         (self.root / "settings.json").write_text(json.dumps({"language": "en_US"}), encoding="utf-8")
         image = Image.new("RGBA", (48, 24), (0, 255, 0, 255))
         draw = ImageDraw.Draw(image)
