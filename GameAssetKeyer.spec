@@ -15,7 +15,9 @@ a = Analysis(
     [str(root / "GameAssetKeyer.py")],
     pathex=[str(root)],
     binaries=[],
-    datas=[(str(root / "locales"), "locales")],
+    # Public releases use the plain theme. Do not collect local review textures.
+    datas=[(str(root / "locales"), "locales"),
+           (str(root / "app/qt_ui/theme.qss"), "app/qt_ui")],
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},

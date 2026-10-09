@@ -20,6 +20,8 @@ LOCKED = {
     "Pillow": "12.2.0",
     "PyInstaller": "6.21.0",
     "pyinstaller-hooks-contrib": "2026.6",
+    "PySide6-Essentials": "6.12.0",
+    "shiboken6": "6.12.0",
 }
 
 
@@ -63,6 +65,9 @@ def main() -> int:
         "platform": platform.platform(),
         "executable": Path(sys.executable).name,
         "packaging": "PyInstaller windowed onedir",
+        "frontend": "Qt Widgets",
+        "release_compute_backend": "cpu",
+        "theme": "plain (no material images)",
     }
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)

@@ -14,7 +14,7 @@ import numpy as np
 from PIL import Image, ImageFilter
 
 from .compute_backend import GPU, current_backend, cvt_color
-from .edge_color import remove_edge_color
+from .edge_color import remove_edge_color, repair_edge_color
 
 TARGETS = {
     "green": (0, 255, 0),
@@ -35,6 +35,7 @@ MODE_LABELS = {
 
 DEFAULT_PARAMS: dict[str, Any] = {
     "operation": "key",
+    "despill_method": "legacy",
     "despill_strength": 0.8,
     "despill_width": 3,
     "despill_tolerance": 0.35,
@@ -291,7 +292,8 @@ def _process_rule_image(image: Image.Image, params: dict[str, Any], apply_hole_p
 
 def process_image(image: Image.Image, params: dict[str, Any], apply_hole_punch: bool = True) -> Image.Image:
     if params.get("operation") == "despill":
-        return remove_edge_color(
+        method = repair_edge_color if params.get("despill_method") == "repair" else remove_edge_color
+        return method(
             image, parse_color(params.get("target_mode", "green"), params.get("custom_color", "#00FF00")),
             strength=float(params.get("despill_strength", 0.8)),
             width=int(float(params.get("despill_width", 3))),

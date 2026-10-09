@@ -20,6 +20,7 @@ from PIL import Image
 
 from .color_key_processor import DEFAULT_PARAMS, PROCESSOR_CACHE_VERSION, process_image
 from .compute_backend import current_backend
+from .edge_color import REPAIR_CACHE_VERSION
 
 PIPELINE_VERSION = 1
 ProgressCallback = Callable[[int, int, int, int], None]
@@ -37,8 +38,15 @@ def normalize_params(params: dict[str, Any] | None = None) -> dict[str, Any]:
         result["target_mode"] = "black"
     if result.get("operation") != "despill":
         # Keep legacy key-stage cache signatures stable when opening old projects.
-        for key in ("operation", "despill_strength", "despill_width", "despill_tolerance"):
+        for key in ("operation", "despill_method", "despill_strength", "despill_width", "despill_tolerance"):
             result.pop(key, None)
+    elif result.get("despill_method") == "repair":
+        # Algorithm revisions invalidate repair output without invalidating
+        # unrelated key stages or the unchanged legacy suppressor.
+        result["despill_revision"] = REPAIR_CACHE_VERSION
+    else:
+        # Absence means the original chroma suppressor, including its cache key.
+        result.pop("despill_method", None)
     return result
 
 

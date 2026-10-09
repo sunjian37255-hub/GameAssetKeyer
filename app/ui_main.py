@@ -26,7 +26,7 @@ from .animation_preview import (
     validate_fps,
 )
 from .branding import APP_NAME
-from .color_key_processor import DEFAULT_PARAMS
+from .color_key_processor import DEFAULT_PARAMS, parse_color
 from .compute_backend import (
     CPU,
     GPU,
@@ -76,6 +76,7 @@ from .ui.theme import (
     BG_INPUT,
     BG_PANEL,
     BG_ROOT,
+    BORDER,
     DISABLED_BG,
     DISABLED_TEXT,
     TEXT_MUTED,
@@ -142,16 +143,55 @@ class GameAssetKeyerApp:
         style.configure("Muted.TLabel", foreground=TEXT_MUTED)
         style.configure("Title.TLabel", font=("Segoe UI Semibold", 18))
         style.configure("Section.TLabel", font=("Segoe UI Semibold", 11))
-        style.configure("TButton", padding=(10, 7))
-        style.configure("Primary.TButton", background=ACCENT, foreground=TEXT_ON_ACCENT)
-        style.map("Primary.TButton", background=[("active", ACCENT_HOVER), ("disabled", DISABLED_BG)], foreground=[("disabled", DISABLED_TEXT)])
+        style.configure("Card.Section.TLabel", background=BG_CARD, font=("Segoe UI Semibold", 12))
+        style.configure("Card.Muted.TLabel", background=BG_CARD, foreground=TEXT_MUTED)
+        style.configure("Card.Number.TLabel", background=BG_CARD, foreground=ACCENT, font=("Segoe UI Semibold", 10))
+        style.configure("TButton", background=BG_CARD, bordercolor=BORDER, lightcolor=BG_CARD,
+                        darkcolor=BG_CARD, relief="flat", borderwidth=1, padding=(9, 6))
+        style.map("TButton", background=[("disabled", BG_PANEL), ("pressed", BORDER), ("active", BORDER)],
+                  foreground=[("disabled", DISABLED_TEXT)], bordercolor=[("focus", ACCENT)])
+        style.configure("Primary.TButton", background=ACCENT, foreground=TEXT_ON_ACCENT, font=("Segoe UI Semibold", 10))
+        style.map("Primary.TButton", background=[("disabled", DISABLED_BG), ("active", ACCENT_HOVER)], foreground=[("disabled", DISABLED_TEXT)])
+        style.configure("Toolbutton", background=BG_INPUT, foreground=TEXT_MUTED, padding=(6, 7), relief="flat", borderwidth=0)
+        style.map("Toolbutton", background=[("selected", BG_CARD), ("active", BORDER)], foreground=[("selected", ACCENT), ("active", TEXT_PRIMARY)])
+        style.configure("TLabelframe", background=BG_PANEL, bordercolor=BORDER, relief="solid", borderwidth=1)
+        style.configure("TLabelframe.Label", foreground=TEXT_MUTED, background=BG_PANEL)
+        for control in ("TEntry", "TSpinbox", "TCombobox"):
+            style.configure(control, fieldbackground=BG_INPUT, background=BG_CARD, foreground=TEXT_PRIMARY,
+                            bordercolor=BORDER, lightcolor=BORDER, darkcolor=BORDER,
+                            arrowcolor=TEXT_MUTED, insertcolor=TEXT_PRIMARY, padding=5)
+            style.map(control, fieldbackground=[("readonly", BG_INPUT), ("disabled", BG_PANEL)],
+                      foreground=[("disabled", DISABLED_TEXT), ("readonly", TEXT_PRIMARY)],
+                      bordercolor=[("focus", ACCENT)], selectbackground=[("!disabled", BORDER)],
+                      selectforeground=[("!disabled", TEXT_PRIMARY)])
+        for control in ("TCheckbutton", "TRadiobutton"):
+            style.configure(control, background=BG_DEFAULT, indicatorbackground=BG_INPUT,
+                            indicatorforeground=ACCENT, indicatorcolor=BG_INPUT, bordercolor=BORDER)
+            style.map(control, background=[("active", BG_DEFAULT)],
+                      indicatorbackground=[("selected", ACCENT), ("active", BORDER)],
+                      indicatorforeground=[("selected", TEXT_ON_ACCENT)])
+        for direction in ("Vertical", "Horizontal"):
+            style.configure(f"{direction}.TScrollbar", background=BORDER, troughcolor=BG_INPUT,
+                            arrowcolor=TEXT_MUTED, bordercolor=BG_INPUT, lightcolor=BORDER,
+                            darkcolor=BORDER, relief="flat", borderwidth=0, arrowsize=13)
+            style.map(f"{direction}.TScrollbar", background=[("active", TEXT_MUTED)])
+        style.configure("Horizontal.TScale", background=BG_CARD, troughcolor=BG_INPUT, bordercolor=BORDER)
+        self.root.option_add("*TCombobox*Listbox.background", BG_INPUT)
+        self.root.option_add("*TCombobox*Listbox.foreground", TEXT_PRIMARY)
+        self.root.option_add("*TCombobox*Listbox.selectBackground", BORDER)
+        self.root.option_add("*TCombobox*Listbox.selectForeground", TEXT_PRIMARY)
         style.configure("Stage.TButton", anchor="w", padding=(10, 8))
         style.configure("Selected.Stage.TButton", background=ACCENT, foreground=TEXT_ON_ACCENT, anchor="w", padding=(10, 8))
+        style.map("Selected.Stage.TButton", background=[("active", ACCENT_HOVER)])
         style.configure("Disabled.Stage.TButton", background=BG_CARD, foreground=DISABLED_TEXT, anchor="w", padding=(10, 8))
         style.map("Disabled.Stage.TButton", foreground=[("active", DISABLED_TEXT), ("disabled", DISABLED_TEXT)])
-        style.configure("Treeview", background=BG_INPUT, fieldbackground=BG_INPUT, foreground=TEXT_PRIMARY, rowheight=28)
+        style.configure("Treeview", background=BG_INPUT, fieldbackground=BG_INPUT, foreground=TEXT_PRIMARY,
+                        rowheight=30, borderwidth=0, bordercolor=BG_INPUT, lightcolor=BG_INPUT, darkcolor=BG_INPUT)
+        style.map("Treeview", background=[("selected", BG_CARD)], foreground=[("selected", ACCENT)])
+        style.configure("Treeview.Heading", background=BG_PANEL, foreground=TEXT_MUTED, relief="flat", padding=(8, 8))
+        style.map("Treeview.Heading", background=[("active", BG_CARD)])
         style.configure("TNotebook", background=BG_ROOT)
-        style.configure("TProgressbar", background=ACCENT)
+        style.configure("TProgressbar", background=ACCENT, troughcolor=BG_INPUT, bordercolor=BG_INPUT, lightcolor=ACCENT, darkcolor=ACCENT)
 
     def _create_variables(self) -> None:
         self.status_var = tk.StringVar(value=self.t("status.ready"))
@@ -161,6 +201,7 @@ class GameAssetKeyerApp:
         self.mode_var = tk.StringVar(value=self.t("mode.black"))
         self.custom_color_var = tk.StringVar(value="#000000")
         self.operation_var = tk.StringVar(value="key")
+        self.despill_method_var = tk.StringVar(value=self.t("despill.legacy"))
         self.despill_strength_var = tk.DoubleVar(value=0.8)
         self.despill_width_var = tk.IntVar(value=3)
         self.despill_tolerance_var = tk.DoubleVar(value=0.35)
@@ -270,15 +311,17 @@ class GameAssetKeyerApp:
             ttk.Label(backend_bar, text=self.t(detail_key, device=device), style="Muted.TLabel").pack(side="left")
         launch = ttk.Frame(home, style="Panel.TFrame")
         launch.pack(fill="x")
-        for title, subtitle, command in [
+        for column, (title, subtitle, command) in enumerate([
             (self.t("home.image"), self.t("home.image_subtitle"), self.create_image_project),
             (self.t("home.sheet"), self.t("home.sheet_subtitle"), self.create_sheet_project),
             (self.t("home.video"), self.t("home.video_subtitle"), self.create_video_project),
-        ]:
+        ]):
+            launch.columnconfigure(column, weight=1, uniform="project_card")
             card = ttk.Frame(launch, padding=18, style="Card.TFrame")
-            card.pack(side="left", fill="both", expand=True, padx=(0, 12))
-            ttk.Label(card, text=title, style="Section.TLabel").pack(anchor="w")
-            ttk.Label(card, text=subtitle, style="Muted.TLabel").pack(anchor="w", pady=(4, 16))
+            card.grid(row=0, column=column, sticky="nsew", padx=(0, 12) if column < 2 else 0)
+            ttk.Label(card, text=f"0{column + 1}", style="Card.Number.TLabel").pack(anchor="w", pady=(0, 12))
+            ttk.Label(card, text=title, style="Card.Section.TLabel").pack(anchor="w")
+            ttk.Label(card, text=subtitle, style="Card.Muted.TLabel").pack(anchor="w", pady=(4, 16))
             ttk.Button(card, text=self.t("home.start"), style="Primary.TButton", command=command).pack(anchor="w")
         standalone = ttk.LabelFrame(home, text=self.t("home.standalone_tools"), padding=12)
         standalone.pack(fill="x", pady=(18, 0))
@@ -293,9 +336,11 @@ class GameAssetKeyerApp:
             card = ttk.Frame(standalone, padding=12, style="Card.TFrame")
             card.grid(row=0, column=column, sticky="nsew", padx=(0, 6) if column == 0 else ((6, 0) if column == 2 else 6))
             card.columnconfigure(0, weight=1)
-            ttk.Label(card, text=self.t(title_key), style="Section.TLabel").grid(row=0, column=0, sticky="w")
-            ttk.Label(card, text=self.t(subtitle_key), style="Muted.TLabel", wraplength=360).grid(row=1, column=0, sticky="w", pady=(4, 12))
-            ttk.Button(card, text=self.t("home.start"), command=command).grid(row=0, column=1, rowspan=2, sticky="e", padx=(12, 0))
+            ttk.Label(card, text=self.t(title_key), style="Card.Section.TLabel").grid(row=0, column=0, sticky="w")
+            description = ttk.Label(card, text=self.t(subtitle_key), style="Card.Muted.TLabel", wraplength=240)
+            description.grid(row=1, column=0, sticky="ew", pady=(4, 12))
+            card.bind("<Configure>", lambda event, label=description: label.configure(wraplength=max(100, event.width - 24)))
+            ttk.Button(card, text=self.t("home.start"), command=command).grid(row=2, column=0, sticky="w")
         recent = ttk.LabelFrame(home, text=self.t("recent.title"), padding=12)
         recent.pack(fill="both", expand=True, pady=(18, 0))
         self.recent_tree = ttk.Treeview(recent, columns=("type", "frames"), show="tree headings")
@@ -454,33 +499,42 @@ class GameAssetKeyerApp:
         outer.rowconfigure(0, weight=1)
         workspace = ttk.Frame(outer, style="Panel.TFrame")
         workspace.grid(row=0, column=0, sticky="nsew")
-        workspace.columnconfigure(0, minsize=210)
+        workspace.columnconfigure(0, minsize=168)
         workspace.columnconfigure(1, weight=1, minsize=320)
         workspace.columnconfigure(2, minsize=350)
         workspace.rowconfigure(0, weight=1)
-        left = ttk.Frame(workspace, padding=10, style="Panel.TFrame", width=210)
-        center = ttk.Frame(workspace, padding=10, style="Panel.TFrame")
+        left = ttk.Frame(workspace, padding=(10, 12), style="Panel.TFrame", width=168)
+        center = ttk.Frame(workspace, padding=(4, 10), style="Panel.TFrame")
         right = ttk.Frame(workspace, padding=10, style="Panel.TFrame", width=350)
         left.grid(row=0, column=0, sticky="nsew")
         center.grid(row=0, column=1, sticky="nsew")
         right.grid(row=0, column=2, sticky="nsew")
-        left.grid_propagate(False)
-        right.grid_propagate(False)
+        # These panels contain packed widgets; constrain that manager, not grid.
+        left.pack_propagate(False)
+        right.pack_propagate(False)
         self._build_left_panel(left)
         self._build_preview_panel(center)
         self._build_pipeline_panel(right)
         self._build_tool_bar(outer).grid(row=1, column=0, sticky="ew")
 
     def _build_left_panel(self, parent: ttk.Frame) -> None:
-        ttk.Label(parent, text=self.current_project.get("name", self.t("project.fallback")), style="Section.TLabel").pack(anchor="w")
+        project_name = self.current_project.get("name", self.t("project.fallback"))
+        title = project_name if len(project_name) <= 28 else project_name[:27] + "…"
+        ttk.Label(parent, text=title, wraplength=148, style="Section.TLabel").pack(anchor="w")
         ttk.Label(parent, text=self.t("project.frames"), style="Muted.TLabel").pack(anchor="w", pady=(2, 8))
         frame_box = ttk.Frame(parent)
         frame_box.pack(fill="both", expand=True)
-        self.frame_listbox = tk.Listbox(frame_box, background=BG_INPUT, foreground=TEXT_PRIMARY, selectbackground=ACCENT, borderwidth=0, highlightthickness=0)
+        frame_box.columnconfigure(0, weight=1)
+        frame_box.rowconfigure(0, weight=1)
+        self.frame_listbox = tk.Listbox(frame_box, background=BG_INPUT, foreground=TEXT_MUTED,
+                                       selectbackground=BG_CARD, selectforeground=ACCENT, font=("Segoe UI", 9),
+                                       activestyle="none", exportselection=False, width=1, borderwidth=0, highlightthickness=0)
         scrollbar = ttk.Scrollbar(frame_box, orient="vertical", command=self.frame_listbox.yview)
-        self.frame_listbox.configure(yscrollcommand=scrollbar.set)
-        self.frame_listbox.pack(side="left", fill="both", expand=True)
-        scrollbar.pack(side="right", fill="y")
+        horizontal = ttk.Scrollbar(frame_box, orient="horizontal", command=self.frame_listbox.xview)
+        self.frame_listbox.configure(yscrollcommand=scrollbar.set, xscrollcommand=horizontal.set)
+        self.frame_listbox.grid(row=0, column=0, sticky="nsew")
+        scrollbar.grid(row=0, column=1, sticky="ns")
+        horizontal.grid(row=1, column=0, sticky="ew")
         self.frame_listbox.bind("<<ListboxSelect>>", self.on_frame_select)
         ttk.Button(parent, text=self.t("project.open_folder"), command=self.open_project_folder).pack(fill="x", pady=(8, 0))
 
@@ -491,10 +545,20 @@ class GameAssetKeyerApp:
         self.view_buttons: dict[str, ttk.Radiobutton] = {}
         left_panel = self._build_preview_side(parent, 0, ("original", "input"), self.left_view_var)
         right_panel = self._build_preview_side(parent, 1, ("result", "final"), self.right_view_var)
-        self.left_preview_canvas = ImageCanvas(left_panel)
+        self.left_preview_canvas = ImageCanvas(left_panel, width=1, height=1)
         self.left_preview_canvas.grid(row=1, column=0, sticky="nsew")
-        self.right_preview_canvas = ImageCanvas(right_panel)
-        self.right_preview_canvas.grid(row=2, column=0, sticky="nsew")
+        self.right_preview_canvas = ImageCanvas(right_panel, width=1, height=1)
+        self.right_preview_canvas.grid(row=1, column=0, sticky="nsew")
+        controls = ttk.Frame(parent)
+        controls.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        self.animation_play_button = ttk.Button(controls, text=self.t("animation.play"), command=self.play_animation)
+        self.animation_play_button.pack(side="left", padx=(0, 4))
+        self.animation_stop_button = ttk.Button(controls, text=self.t("animation.stop"), command=self.stop_animation, state="disabled")
+        self.animation_stop_button.pack(side="left", padx=(0, 12))
+        ttk.Label(controls, text=self.t("animation.fps"), style="Muted.TLabel").pack(side="left", padx=(0, 4))
+        self.animation_fps_spinbox = ttk.Spinbox(controls, from_=1, to=60, width=4, textvariable=self.animation_fps_var)
+        self.animation_fps_spinbox.pack(side="left")
+        ttk.Label(controls, text=self.t("animation.fps_suffix"), style="Muted.TLabel").pack(side="left", padx=(4, 0))
         # Preserve the public attribute used by the eyedropper and existing integrations.
         self.preview_canvas = self.left_preview_canvas
 
@@ -502,7 +566,7 @@ class GameAssetKeyerApp:
         panel = ttk.Frame(parent, style="Panel.TFrame")
         panel.grid(row=0, column=column, sticky="nsew", padx=(0, 4) if column == 0 else (4, 0))
         panel.columnconfigure(0, weight=1)
-        panel.rowconfigure(1 if column == 0 else 2, weight=1)
+        panel.rowconfigure(1, weight=1)
         toolbar = ttk.Frame(panel)
         toolbar.grid(row=0, column=0, sticky="ew", pady=(0, 8))
         for button_column, key in enumerate(keys):
@@ -517,22 +581,6 @@ class GameAssetKeyerApp:
             )
             button.grid(row=0, column=button_column, sticky="ew", padx=(0, 4) if button_column == 0 else 0)
             self.view_buttons[key] = button
-        if column == 1:
-            controls = ttk.Frame(panel)
-            controls.grid(row=1, column=0, sticky="ew", pady=(0, 8))
-            controls.columnconfigure(0, weight=1)
-            controls.columnconfigure(1, weight=1)
-            controls.columnconfigure(2, weight=0)
-            controls.columnconfigure(3, weight=0)
-            controls.columnconfigure(4, weight=0)
-            self.animation_play_button = ttk.Button(controls, text=self.t("animation.play"), command=self.play_animation)
-            self.animation_play_button.grid(row=0, column=0, sticky="ew", padx=(0, 4))
-            self.animation_stop_button = ttk.Button(controls, text=self.t("animation.stop"), command=self.stop_animation, state="disabled")
-            self.animation_stop_button.grid(row=0, column=1, sticky="ew", padx=(0, 8))
-            ttk.Label(controls, text=self.t("animation.fps")).grid(row=0, column=2, sticky="e", padx=(0, 4))
-            self.animation_fps_spinbox = ttk.Spinbox(controls, from_=1, to=60, width=4, textvariable=self.animation_fps_var)
-            self.animation_fps_spinbox.grid(row=0, column=3, sticky="e")
-            ttk.Label(controls, text=self.t("animation.fps_suffix")).grid(row=0, column=4, sticky="w", padx=(3, 0))
         return panel
 
     def _build_pipeline_panel(self, parent: ttk.Frame) -> None:
@@ -544,8 +592,8 @@ class GameAssetKeyerApp:
         self.stage_list_frame.pack(fill="x")
         stage_actions = ttk.Frame(self.pipeline_scroll.content)
         stage_actions.pack(fill="x", pady=6)
-        for text, command in [("+", self.add_stage_ui), (self.t("action.duplicate"), self.duplicate_stage_ui), (self.t("action.delete"), self.delete_stage_ui), ("↑", lambda: self.move_stage_ui(-1)), ("↓", lambda: self.move_stage_ui(1))]:
-            ttk.Button(stage_actions, text=text, command=command).pack(side="left", padx=(0, 3))
+        for text, command, width in [("+", self.add_stage_ui, 2), (self.t("action.duplicate"), self.duplicate_stage_ui, 8), (self.t("action.delete"), self.delete_stage_ui, 6), ("↑", lambda: self.move_stage_ui(-1), 2), ("↓", lambda: self.move_stage_ui(1), 2)]:
+            ttk.Button(stage_actions, text=text, command=command, width=width, padding=(4, 6)).pack(side="left", padx=(0, 3))
         ttk.Button(self.pipeline_scroll.content, text=self.t("despill.add"), command=self.add_despill_stage_ui).pack(fill="x", pady=(4, 0))
         self._build_stage_editor(self.pipeline_scroll.content)
 
@@ -555,8 +603,11 @@ class GameAssetKeyerApp:
         ttk.Label(editor, text=self.t("editor.target_color")).grid(row=0, column=0, sticky="w")
         mode = ttk.Combobox(editor, textvariable=self.mode_var, values=list(self.mode_labels().values()), state="readonly")
         mode.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(2, 6))
-        mode.bind("<<ComboboxSelected>>", lambda _event: self.update_intensity_label())
-        ttk.Entry(editor, textvariable=self.custom_color_var).grid(row=2, column=0, sticky="ew")
+        mode.bind("<<ComboboxSelected>>", self.on_target_color_change)
+        color_entry = ttk.Entry(editor, textvariable=self.custom_color_var)
+        color_entry.grid(row=2, column=0, sticky="ew")
+        color_entry.bind("<FocusOut>", self.on_target_color_change)
+        color_entry.bind("<Return>", self.on_target_color_change)
         ttk.Button(editor, text=self.t("editor.eyedropper"), command=self.start_eyedropper).grid(row=2, column=1, padx=(4, 0))
         ttk.Label(editor, text=self.t("editor.intensity")).grid(row=3, column=0, sticky="w", pady=(8, 0))
         scale = ttk.Scale(editor, from_=1, to=5, variable=self.intensity_var, command=self.on_intensity_change)
@@ -593,11 +644,33 @@ class GameAssetKeyerApp:
         self._key_editor_widgets = [widget for widget in editor.winfo_children()
                                     if 3 <= int(widget.grid_info().get("row", -1)) <= 10]
         self.despill_editor = ttk.Frame(editor)
-        self._spin(self.despill_editor, self.t("despill.strength"), self.despill_strength_var, 0, 1, 0.05, 0)
-        self._spin(self.despill_editor, self.t("despill.width"), self.despill_width_var, 1, 32, 1, 1)
-        self._spin(self.despill_editor, self.t("despill.tolerance"), self.despill_tolerance_var, 0.01, 1, 0.05, 2)
-        ttk.Label(self.despill_editor, text=self.t("despill.hint"), wraplength=270, style="Muted.TLabel").grid(row=3, column=0, columnspan=2, sticky="ew", pady=6)
+        self.despill_editor.columnconfigure(0, weight=1)
+        ttk.Label(self.despill_editor, text=self.t("despill.method")).grid(row=0, column=0, columnspan=2, sticky="w", pady=(8, 3))
+        method = ttk.Combobox(self.despill_editor, textvariable=self.despill_method_var,
+                             values=[self.t("despill.repair"), self.t("despill.legacy")], state="readonly", width=18)
+        method.grid(row=1, column=0, columnspan=2, sticky="ew")
+        method.bind("<<ComboboxSelected>>", self.on_despill_method_change)
+        self._spin(self.despill_editor, self.t("despill.strength"), self.despill_strength_var, 0, 1, 0.05, 2)
+        self._spin(self.despill_editor, self.t("despill.width"), self.despill_width_var, 1, 32, 1, 3)
+        self._spin(self.despill_editor, self.t("despill.tolerance"), self.despill_tolerance_var, 0.01, 1, 0.05, 4)
+        ttk.Label(self.despill_editor, text=self.t("despill.hint"), wraplength=270, style="Muted.TLabel").grid(row=5, column=0, columnspan=2, sticky="ew", pady=6)
         self.refresh_operation_editor()
+
+    def on_despill_method_change(self, _event=None) -> None:
+        if self.despill_method_var.get() != self.t("despill.legacy"):
+            return
+        try:
+            color = parse_color(self.mode_key(), self.custom_color_var.get())
+        except ValueError:
+            return
+        if max(color) == min(color):
+            self.despill_method_var.set(self.t("despill.repair"))
+            self.status_var.set(self.t("despill.neutral_repair"))
+
+    def on_target_color_change(self, _event=None) -> None:
+        self.update_intensity_label()
+        if self.operation_var.get() == "despill":
+            self.on_despill_method_change()
 
     def refresh_operation_editor(self) -> None:
         if not hasattr(self, "despill_editor") or not self.despill_editor.winfo_exists():
@@ -697,18 +770,18 @@ class GameAssetKeyerApp:
             ttk.Checkbutton(row, variable=enabled, command=lambda i=index, var=enabled: self.toggle_stage_ui(i, var.get())).pack(side="left")
             mode_key = stage["params"]["target_mode"]
             mode = self.mode_labels().get(mode_key, self.t("mode.custom"))
-            if stage["params"].get("operation") == "despill":
-                mode = self.t("despill.name") + " · " + mode
+            operation = self.t("despill.name") if stage["params"].get("operation") == "despill" else ""
             custom = stage["params"]["custom_color"] if mode_key == "custom" else ""
             status = self.t(f"stage.{stage['status']}")
-            text = f"{self.t('stage.label', number=index + 1)} · {mode} {custom} · {status}"
+            detail = " · ".join(part for part in (operation, custom, status) if part)
+            text = f"{self.t('stage.label', number=index + 1)} · {mode}\n{detail}"
             if index == self.selected_stage_index:
                 style = "Selected.Stage.TButton"
             elif not stage.get("enabled", True):
                 style = "Disabled.Stage.TButton"
             else:
                 style = "Stage.TButton"
-            ttk.Button(row, text=text, style=style, command=lambda i=index: self.select_stage(i)).pack(side="left", fill="x", expand=True)
+            ttk.Button(row, text=text, style=style, width=1, command=lambda i=index: self.select_stage(i)).pack(side="left", fill="x", expand=True)
 
     def select_stage(self, index: int) -> None:
         self.stop_animation()
@@ -726,6 +799,7 @@ class GameAssetKeyerApp:
     def collect_params(self) -> dict:
         return {
             "operation": self.operation_var.get(),
+            "despill_method": "repair" if self.despill_method_var.get() == self.t("despill.repair") else "legacy",
             "despill_strength": float(self.despill_strength_var.get()),
             "despill_width": int(float(self.despill_width_var.get())),
             "despill_tolerance": float(self.despill_tolerance_var.get()),
@@ -748,6 +822,7 @@ class GameAssetKeyerApp:
         config = DEFAULT_PARAMS.copy()
         config.update(params)
         self.operation_var.set(config["operation"])
+        self.despill_method_var.set(self.t("despill.repair" if config["despill_method"] == "repair" else "despill.legacy"))
         self.despill_strength_var.set(float(config["despill_strength"]))
         self.despill_width_var.set(int(config["despill_width"]))
         self.despill_tolerance_var.set(float(config["despill_tolerance"]))
@@ -795,8 +870,8 @@ class GameAssetKeyerApp:
         self.stop_animation()
         params = self.collect_params()
         params["operation"] = operation
-        if operation == "despill" and params["target_mode"] in {"black", "white"}:
-            params.update(target_mode="green", custom_color="#00FF00")
+        if operation == "despill":
+            params["despill_method"] = "repair"
         self.selected_stage_index = add_stage(self.current_project, params)
         self.pm.save_project(self.current_project_id, self.current_project)
         self.refresh_stage_list()

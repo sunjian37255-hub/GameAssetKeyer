@@ -1,0 +1,62 @@
+/* Local Wuxing material study. Images remain outside the public source set. */
+QWidget { color: #e4e2d8; }
+QMainWindow, QWidget#page { background: #161c1e; }
+QFrame#header {
+    background: #182324;
+    border: 5px solid transparent;
+    border-image: url("@ASSETS@/panel_build.png") 36 36 36 36 repeat repeat;
+}
+QLabel#brand, QLabel#hero { color: #f0e7cf; }
+QLabel#section { color: #d9c497; }
+QLabel#eyebrow { color: #b8cba9; }
+QLabel#muted { color: #a3aeab; }
+QLabel#badge { color: #dbcfac; background: #303a32; }
+QFrame#card, QFrame#texturedPanel {
+    background: #172123;
+    border: 8px solid transparent;
+    border-radius: 0;
+    border-image: url("@ASSETS@/panel_build.png") 36 36 36 36 repeat repeat;
+}
+QFrame#panel { background: #1b2427; border-color: #42514e; }
+QPushButton {
+    color: #ded5c1;
+    background: transparent;
+    border: 5px solid transparent;
+    border-radius: 0;
+    padding: 3px 8px;
+    border-image: url("@ASSETS@/button_secondary.png") 14 14 14 14 stretch stretch;
+}
+QPushButton:hover, QPushButton:checked, QPushButton#primary {
+    color: #f0e0b5;
+    background: transparent;
+    border: 5px solid transparent;
+    border-image: url("@ASSETS@/button_primary.png") 14 14 14 14 stretch stretch;
+}
+QPushButton:focus { color: #b7f4d8; }
+QPushButton:pressed { color: #ffffff; padding-top: 4px; padding-bottom: 2px; }
+QPushButton:disabled, QPushButton#primary:disabled {
+    color: #87928e;
+    background: transparent;
+    border: 5px solid transparent;
+    border-image: url("@ASSETS@/button_secondary.png") 14 14 14 14 stretch stretch;
+}
+QPushButton#primary:hover { background: transparent; color: #fff1ce; }
+QLineEdit, QComboBox { background: #141e20; border-color: #47554e; color: #ece9df; }
+QLabel#value { background: #182223; color: #e4dfcc; }
+QListWidget::item:selected { background: #29423b; border-color: #b19a63; color: #f3e7c7; }
+QListWidget#projects::item {
+    background: #1c2827;
+    border: 4px solid transparent;
+    border-radius: 0;
+    border-image: url("@ASSETS@/panel_build.png") 36 36 36 36 repeat repeat;
+}
+QListWidget#projects::item:selected { color: #9bf0c9; }
+QScrollArea > QWidget > QWidget { background: transparent; }
+QScrollBar:vertical { background: #182222; }
+QScrollBar::handle:vertical { background: #727963; }
+QScrollBar::handle:vertical:hover { background: #b3a479; }
+QSplitter::handle { background: #161c1e; }
+QSplitter::handle:hover { background: #8c7e56; }
+QGroupBox { border-color: #4b574e; }
+QGroupBox::title { color: #cbb98e; }
+QStatusBar { background: #1c2727; color: #a8b1a6; border-top-color: #4a5547; }

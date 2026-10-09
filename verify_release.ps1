@@ -47,8 +47,8 @@ if ($license -match '(?im)^MIT License\s*$') {
     $failures.Add('Obsolete MIT root license found')
 }
 $sourceNotice = Get-Content -Raw -LiteralPath (Join-Path $root 'SOURCE.txt')
-if ($sourceNotice -notmatch [regex]::Escape('https://github.com/sunjian37255-hub/GameAssetKeyer/tree/v1.2.0')) {
-    $failures.Add('SOURCE.txt does not point to the v1.2.0 corresponding source')
+if ($sourceNotice -notmatch [regex]::Escape('https://github.com/sunjian37255-hub/GameAssetKeyer/tree/v1.3.0')) {
+    $failures.Add('SOURCE.txt does not point to the v1.3.0 corresponding source')
 }
 $thirdParty = Join-Path $root 'THIRD_PARTY_LICENSES'
 foreach ($pattern in @('CPython-3.14.3-LICENSE.txt', 'Tcl-Tk-8.6.15-license.terms', 'numpy-2.4.4', 'Pillow-12.2.0', 'opencv-python-headless-4.13.0.92', 'PyInstaller-6.21.0')) {
@@ -61,6 +61,15 @@ foreach ($pattern in @('CPython-3.14.3-LICENSE.txt', 'Tcl-Tk-8.6.15-license.term
     ForEach-Object { Require-File $_ }
 @('_tcl_data', '_tk_data', 'tcl', 'cv2', 'numpy', 'numpy.libs', 'PIL') |
     ForEach-Object { Require-Directory $_ }
+@('Qt6Core.dll', 'Qt6Gui.dll', 'Qt6Widgets.dll', 'qwindows.dll', 'theme.qss', 'LGPL-3.0-only.txt', 'GPL-3.0-only.txt') |
+    ForEach-Object { Require-File $_ }
+foreach ($name in @('panel_build.png', 'button_primary.png', 'button_secondary.png', 'settings.json')) {
+    if (@(Find-ReleaseItem $name).Count) { $failures.Add("Private/local artifact included: $name") }
+}
+# Qt uses the Windows ICU API. Poppler/Conda ICU binaries have incompatible exports.
+foreach ($name in @('icuuc.dll', 'icudt78.dll')) {
+    if (@(Find-ReleaseItem $name).Count) { $failures.Add("Unexpected bundled ICU DLL: $name") }
+}
 
 if (@(Get-ChildItem -LiteralPath $root -Recurse -File -Filter '_imaging*.pyd').Count -eq 0) {
     $failures.Add('Missing Pillow native imaging component: _imaging*.pyd')

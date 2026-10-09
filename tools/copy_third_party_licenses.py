@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 
 
-PACKAGES = ("numpy", "Pillow", "opencv-python-headless", "PyInstaller")
+PACKAGES = ("numpy", "Pillow", "opencv-python-headless", "PyInstaller", "PySide6-Essentials", "shiboken6")
 
 
 def copy_package_licenses(package: str, destination: Path) -> int:
@@ -46,9 +46,7 @@ def main() -> int:
     args = parser.parse_args()
     release_dir = args.release_dir.resolve()
     destination = release_dir / "THIRD_PARTY_LICENSES"
-    if destination.exists():
-        shutil.rmtree(destination)
-    destination.mkdir(parents=True)
+    destination.mkdir(parents=True, exist_ok=True)
 
     python_license = Path(sys.base_prefix) / "LICENSE.txt"
     if not python_license.is_file():

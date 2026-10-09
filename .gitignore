@@ -10,6 +10,7 @@ Thumbs.db
 .DS_Store
 
 .venv/
+.venv-qt/
 .build-venv/
 venv/
 env/
@@ -30,3 +31,4 @@ outputs/
 projects/
 settings.json
 self_test_result.json
+app/qt_ui/assets/wuxing_local/

@@ -1,9 +1,12 @@
-GameAssetKeyer v1.2.0
+GameAssetKeyer v1.3.0
 
 This binary distribution is licensed under the Mozilla Public License 2.0.
 
 Corresponding Source Code:
-https://github.com/sunjian37255-hub/GameAssetKeyer/tree/v1.2.0
+https://github.com/sunjian37255-hub/GameAssetKeyer/tree/v1.3.0
+
+Qt / PySide6 corresponding source archives and replacement instructions:
+See THIRD_PARTY_NOTICES.txt and the QtSources asset of the same release.
 
 License:
 https://www.mozilla.org/MPL/2.0/

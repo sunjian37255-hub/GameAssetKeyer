@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.3.0] - 2026-10-10
+
+### Added
+
+- Qt workbench with simultaneous before/after previews, a narrower frame list,
+  persistent trim/alignment/export controls, and an adjustable detection slider.
+- Inline animation playback and a window-wide playback view with play/pause,
+  exit, FPS, loop and seek controls; Escape returns without losing player state.
+- Hybrid fringe repair combining nearby reference colors with remaining chromatic
+  spill suppression, preserving Alpha. Existing legacy stages remain compatible.
+
+### Packaging
+
+- The Windows executable now launches Qt, using the plain dark theme without
+  local material images. Windows x64, CPU-only, windowed onedir remains unchanged.
+- Qt native startup checks, pinned bindings, corresponding source archives and
+  third-party license notices. Builds exclude private presets and user projects.
+- Source mode retains the optional OpenCL backend and legacy Tk launcher.
+
 ## [1.2.0] - 2026-09-13
 
 ### Added

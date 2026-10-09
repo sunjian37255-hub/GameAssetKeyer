@@ -134,15 +134,28 @@ def run_self_test(image_path: Path, output_path: Path | None = None) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description=APP_NAME)
     parser.add_argument("--check", action="store_true", help="Import-check only, do not open GUI")
+    parser.add_argument("--qt", action="store_true", help="Use the Qt UI (default in Windows releases)")
+    parser.add_argument("--qt-smoke-output", type=Path, help="Run an isolated Qt startup smoke check and write JSON")
     parser.add_argument("--self-test-image", default="", help="Run deterministic smoke test with a 3x3 PNG image")
     parser.add_argument("--self-test-output", default="", help="Write self-test JSON to this path")
     args = parser.parse_args()
     initialize_backend(get_app_root())
+    use_qt = args.qt or getattr(sys, "frozen", False)
+    if args.qt_smoke_output:
+        from app.qt_ui.smoke import run_smoke
+        return run_smoke(args.qt_smoke_output)
     if args.check:
+        if use_qt:
+            import PySide6
+            from app.qt_ui.window import Window
+            print(f"Qt UI import OK: PySide6={PySide6.__version__}, Window={Window.__name__}")
         return run_import_check()
     if args.self_test_image:
         output = Path(args.self_test_output) if args.self_test_output else None
         return run_self_test(Path(args.self_test_image), output)
+    if use_qt:
+        from app.qt_ui.window import run
+        return run(get_app_root())
     app = GameAssetKeyerApp(get_app_root())
     app.run()
     return 0

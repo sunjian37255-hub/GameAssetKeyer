@@ -7,27 +7,15 @@ setlocal
 set "APP=%~dp0GameAssetKeyer.py"
 set "PY="
 
-rem Prefer the real CPython installation.  WindowsApps may contain a
-rem python.exe alias that `where` can see even though cmd.exe cannot run it.
-if exist "%LocalAppData%\Python\pythoncore-3.14-64\python.exe" set "PY=%LocalAppData%\Python\pythoncore-3.14-64\python.exe"
-if not defined PY if exist "%LocalAppData%\Python\bin\python.exe" set "PY=%LocalAppData%\Python\bin\python.exe"
+rem Qt stays isolated from the verified release build environment.
+if defined GAK_QT_PYTHON if exist "%GAK_QT_PYTHON%" set "PY=%GAK_QT_PYTHON%"
+if not defined PY if exist "%~dp0.venv-qt\Scripts\python.exe" set "PY=%~dp0.venv-qt\Scripts\python.exe"
+if not defined PY if exist "I:\CodexSafeCheck\GameAssetKeyer-QtPreview\venv\Scripts\python.exe" set "PY=I:\CodexSafeCheck\GameAssetKeyer-QtPreview\venv\Scripts\python.exe"
 
 if not defined PY (
-    for /f "delims=" %%P in ('where python.exe 2^>nul') do (
-        echo %%P | findstr /i /c:"\WindowsApps\" >nul
-        if errorlevel 1 if not defined PY set "PY=%%P"
-    )
-)
-
-if not defined PY (
-    where py.exe >nul 2>&1
-    if not errorlevel 1 (
-        cd /d "%~dp0"
-        py.exe -3 "%APP%" %*
-        exit /b %ERRORLEVEL%
-    )
-    echo [ERROR] Python 3 not found.
-    echo Install Python 3, then run: pip install -r requirements.txt
+    echo [ERROR] Qt source environment not found.
+    echo Create .venv-qt and install requirements-qt.txt, or set GAK_QT_PYTHON.
+    echo The existing Tk source UI is available through run_legacy.cmd.
     pause
     exit /b 1
 )
@@ -40,5 +28,10 @@ if not exist "%APP%" (
 )
 
 cd /d "%~dp0"
-"%PY%" "%APP%" %*
-exit /b %ERRORLEVEL%
+"%PY%" "%APP%" --qt %*
+set "RESULT=%ERRORLEVEL%"
+if not "%RESULT%"=="0" (
+    echo [ERROR] GameAssetKeyer exited with code %RESULT%.
+    if "%~1"=="" pause
+)
+exit /b %RESULT%

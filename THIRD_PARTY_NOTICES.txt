@@ -1,4 +1,4 @@
-GameAssetKeyer v1.2.0 - Third-Party Notices
+GameAssetKeyer v1.3.0 - Third-Party Notices
 ============================================
 
 GameAssetKeyer source files are licensed separately under MPL-2.0.
@@ -18,6 +18,32 @@ Included runtime/build components
 - opencv-python-headless 4.13.0.92, including its bundled OpenCV video I/O /
   FFmpeg component and the wheel's third-party license notices
 - PyInstaller 6.21.0 bootloader
+- PySide6-Essentials, shiboken6 and Qt 6.12.0 (LGPL-3.0)
+
+Qt / PySide6 notice and corresponding sources
+-------------------------------------------
+This application uses dynamically linked Qt and PySide6 libraries under LGPL 3.0.
+The MPL license of GameAssetKeyer does not replace their LGPL terms. Complete
+LGPL and GPL texts and upstream third-party notices are in THIRD_PARTY_LICENSES.
+The commercial-license alternative mentioned in upstream files is not used.
+
+Unmodified corresponding sources (Qt Base, SVG, Image Formats and PySide Setup):
+https://github.com/sunjian37255-hub/GameAssetKeyer/releases/download/v1.3.0/GameAssetKeyer-v1.3.0-QtSources.zip
+SOURCES.json in that archive records original URLs and verified SHA-256 hashes.
+
+You may modify and replace these libraries and reverse-engineer the application
+as needed to debug those modifications. No signature check prevents replacement.
+With the application closed, replace compatible x64 DLLs, bindings and plugins
+in _internal/PySide6 and _internal/shiboken6, retaining their relative paths.
+Keep a copy of the original installation to recover from ABI-incompatible changes.
+Alternatively, build the supplied PySide/Qt sources using their included build
+instructions, install the resulting bindings in a Python environment, install
+GameAssetKeyer's other requirements, and run GameAssetKeyer.py --qt from its
+corresponding source tag. To create an executable with those modified bindings,
+run PyInstaller with GameAssetKeyer.spec in that environment, then copy runtime
+and licensing materials as documented by build_release.bat. The official build
+script's exact-version checks describe the official build, not a restriction on
+your ability to run modified libraries. No proprietary SDK is required by this app.
 
 See THIRD_PARTY_LICENSES for the authoritative license texts distributed by
 the corresponding upstream packages and runtime.

@@ -13,6 +13,9 @@ It can process single images, sprite sheets, and video frames, with custom targe
 
 It is designed for practical 2D production workflows, including AI-generated sprites, rendered assets, traditional chroma-key artwork, effects, characters, and animation frames. GameAssetKeyer itself contains no AI runtime, model download, API integration, or upload feature.
 
+Version 1.3 introduces the Qt workbench and inline / window-wide animation playback.
+The screenshots below show the earlier Tk interface; the processing workflows remain applicable.
+
 ![GameAssetKeyer processing a 2D character sprite sheet: original chroma-key frame on the left and transparent result on the right.](docs/images/single-pass-keying.png)
 
 ## Why GameAssetKeyer?
@@ -36,7 +39,7 @@ Background removal is often only one step in preparing game-ready animation asse
 - Custom RGB chroma key and eyedropper
 - 5× pixel loupe with an exact center marker for dual-preview eyedropper sampling
 - Unlimited multi-pass stages with per-stage parameters
-- Independent **Remove color fringe** stages after keying: choose/sample a chromatic target color and adjust strength, edge width and similar-color range. Only edge RGB is corrected; alpha and fine hair coverage are preserved. Black/white/gray targets are not supported. Existing keying stages retain their behavior.
+- Independent **Remove color fringe** stages after keying: new stages use **Hybrid color repair**, including black, white, gray and custom targets. Nearby color repair is followed by suppression of remaining chromatic spill, including thin edges without a reference. Reference depth and search radius do not increase with edge width. Adjust strength, edge width and similar-color range. Alpha and fine hair coverage are unchanged. Neutral targets stay unchanged without a reliable reference. Genuine target-colored edges or rim lighting can also match, so start narrow and inspect them. This does not remove residual background opacity. Existing **Legacy chroma suppression** stages retain their behavior and caches; updated hybrid repair invalidates its earlier cached results and requires reprocessing before export.
 - Per-frame parameter overrides
 - Background batch processing with progress and cancellation
 - Non-destructive disk-backed Pipeline and cache invalidation
@@ -124,7 +127,7 @@ Post-processing results carry source signatures. If the Pipeline changes, old tr
 
 Windows users do not need Python or `pip`.
 
-1. Download `GameAssetKeyer-v1.2.0-Windows-x64.zip` from the [Releases](../../releases) page.
+1. Download `GameAssetKeyer-v1.3.0-Windows-x64.zip` from the [Releases](../../releases) page.
 2. Extract the entire archive to a normal writable folder.
 3. Run `GameAssetKeyer.exe`.
 
@@ -134,27 +137,37 @@ The Windows executable is currently unsigned, so Windows SmartScreen may display
 
 ## Run from Source
 
+The Qt frontend is used by the Windows release and the source launcher.
+Use `run.cmd` with a `requirements-qt.txt` environment; see
+[Qt source workbench](app/qt_ui/README.md) for setup and validation.
+`run_legacy.cmd` retains the existing Tk interface. Close one frontend before
+editing the same project in the other. Windows releases use the plain dark theme;
+optional local review textures are not included in the public source or release.
+
+For the Qt source interface:
+
 Runtime dependencies support Python 3.11 or later. Python 3.13 is used by source CI; the official Windows build uses the separately pinned environment below. A Python installation with Tkinter/Tcl/Tk is required.
 
 Source runs expose a CPU / GPU (OpenCL) selector on the home page. GPU mode accelerates compatible color and Alpha operations when OpenCV detects an OpenCL device; unsupported steps remain on the CPU. The portable Windows release is intentionally locked to CPU for predictable cross-machine compatibility.
 
 ```bat
-python -m venv .venv
-.venv\Scripts\activate
-python -m pip install -r requirements.txt
-python GameAssetKeyer.py
+python -m venv .venv-qt
+.venv-qt\Scripts\activate
+python -m pip install -r requirements-qt.txt
+python GameAssetKeyer.py --qt
 ```
 
 Run checks:
 
 ```bat
-python GameAssetKeyer.py --check
+python GameAssetKeyer.py --qt --check
 python -m unittest discover -s tests -v
+python -m unittest discover -s tests_qt -v
 ```
 
 ## Building the Windows Release
 
-Official v1.0 Windows releases use:
+Official Windows releases use:
 
 - Python 3.14.3 x64
 - Tcl/Tk 8.6.15
@@ -163,10 +176,19 @@ Official v1.0 Windows releases use:
 - NumPy 2.4.4
 - opencv-python-headless 4.13.0.92
 - Pillow 12.2.0
+- PySide6-Essentials / shiboken6 / Qt 6.12.0
 
-Run `build_release.bat` from a Windows environment with the pinned Python available. The script creates an isolated build environment, runs tests, builds the package, copies the complete Tcl/Tk runtime, verifies required runtime files, and produces the ZIP plus its checksum.
+Run `build_release.bat` from a Windows environment with the pinned Python available. Set `GAK_PYTHON` to its executable if needed. The script creates a fresh isolated build environment, runs both test suites, builds the package, copies the complete Tcl/Tk runtime, verifies Qt and native runtime files, and produces the ZIP plus its checksum. Existing builds are preserved; use a new `GAK_BUILD_ROOT` for each build. It refuses to overwrite a release ZIP.
+
+Publish the generated `GameAssetKeyer-v1.3.0-QtSources.zip` alongside the Windows ZIP. It contains the checksum-verified, unmodified Qt and PySide6 corresponding sources. See [third-party notices](THIRD_PARTY_NOTICES.txt) for licenses and library replacement instructions.
+Set `GAK_QT_SOURCE_CACHE` to reuse downloaded source archives; pinned official
+hashes are checked again on every build, including when using the cache.
 
 Official releases use PyInstaller **onedir**, not onefile.
+
+The build script restricts its DLL search PATH to the isolated environment and
+Windows system directories, preventing unrelated developer-tool ICU/codec DLLs
+from leaking into the release.
 
 ## Contributing and Security
 

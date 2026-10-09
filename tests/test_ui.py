@@ -268,6 +268,53 @@ class UiTests(unittest.TestCase):
         self.assertTrue(self.app.cancel_button.winfo_ismapped())
         self.app.root.withdraw()
 
+    def test_compact_frame_rail_and_equal_previews_at_narrow_sizes(self) -> None:
+        self.app.root.tk.call("tk", "scaling", 1.6666667)
+        project = self.app.pm.create_project(self.source, "very-long-project-name-" * 8, 1, 1, "white")
+        self.app.load_project(project["id"])
+        self.app.root.deiconify()
+        for locale in ("zh_CN", "en_US"):
+            self.app.language_combo.set("English" if locale == "en_US" else "简体中文")
+            self.app.on_language_change()
+            for width in (1360, 1100, 960):
+                with self.subTest(locale=locale, width=width):
+                    self.app.root.geometry(f"{width}x820+0+0")
+                    self.app.root.update()
+                    left = self.app.left_preview_canvas
+                    right = self.app.right_preview_canvas
+                    rail = self.app.frame_listbox.master.master
+                    self.assertEqual(rail.winfo_width(), 168)
+                    # Windows DPI conversion can round the two pane widths differently.
+                    self.assertLessEqual(abs(left.winfo_width() - right.winfo_width()), 2)
+                    self.assertEqual(left.winfo_rooty(), right.winfo_rooty())
+                    self.assertEqual(left.winfo_height(), right.winfo_height())
+                    self.assertGreater(left.winfo_width() + right.winfo_width(), width - 550)
+                    scrollbar = self.app.pipeline_scroll.scrollbar
+                    self.assertLessEqual(scrollbar.winfo_rootx() + scrollbar.winfo_width(),
+                                         self.app.root.winfo_rootx() + width)
+                    self.assertLessEqual(self.app.animation_fps_spinbox.winfo_rootx() + self.app.animation_fps_spinbox.winfo_width(),
+                                         right.winfo_rootx() + right.winfo_width())
+        self.app.root.withdraw()
+
+    def test_new_neutral_repair_stage_and_language_switch_preserve_method(self) -> None:
+        project = self.app.pm.create_project(self.source, "white-repair", 1, 1, "white")
+        self.app.load_project(project["id"])
+        self.app.add_despill_stage_ui()
+        self.assertEqual(self.app.collect_params()["target_mode"], "white")
+        self.assertEqual(self.app.collect_params()["despill_method"], "repair")
+        self.app.language_combo.set("English")
+        self.app.on_language_change()
+        self.assertEqual(self.app.collect_params()["despill_method"], "repair")
+        self.app.despill_method_var.set(self.app.t("despill.legacy"))
+        self.app.on_despill_method_change()
+        self.assertEqual(self.app.collect_params()["despill_method"], "repair")
+        self.app.mode_var.set(self.app.mode_labels()["green"])
+        self.app.despill_method_var.set(self.app.t("despill.legacy"))
+        self.app.save_selected_stage()
+        self.app.load_project(project["id"])
+        self.app.select_stage(1)
+        self.assertEqual(self.app.collect_params()["despill_method"], "legacy")
+
     def test_export_opens_actual_output_directory_after_success(self) -> None:
         project = self.app.pm.create_project(self.source, "export-folder", 1, 1, "white")
         self.app.load_project(project["id"])
